@@ -169,7 +169,7 @@ def process_job(job_id: int) -> None:
         result = run_max_coverage_query(
             job.steamid,
             key=current_app.config["STEAMWEBAPI_KEY"],
-            language="english",
+            language=current_app.config["ITEM_LANGUAGE"],
             timeout=120,
             trading_samples=3,
             normal_samples=1,

@@ -26,6 +26,7 @@ class Config:
     REQUESTS_PER_SCAN = int(os.getenv("CS2_REQUESTS_PER_SCAN", "7"))
     PROFILE_REFRESH_DAYS = 7
     STEAMWEBAPI_KEY = os.getenv("STEAMWEBAPI_KEY", "").strip()
+    ITEM_LANGUAGE = os.getenv("CS2_ITEM_LANGUAGE", "schinese").strip() or "schinese"
     OBSERVATION_CACHE = os.getenv(
         "INVENTORY_OBSERVATION_CACHE", str(STATE_DIR / "observations.json")
     )

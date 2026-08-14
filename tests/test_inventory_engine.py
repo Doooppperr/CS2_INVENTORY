@@ -42,6 +42,35 @@ from cs2_inventory.inventory_engine import (
 
 
 class CS2InventoryQueryTests(unittest.TestCase):
+    def test_inventory_prefers_localized_market_name_over_english_hash_name(self):
+        payload = {
+            "assets": [
+                {"appid": APPID_CS2, "contextid": CONTEXTID_CS2, "assetid": "a1", "classid": "c1", "instanceid": "0", "amount": "1"},
+            ],
+            "descriptions": [
+                {
+                    "appid": APPID_CS2,
+                    "contextid": CONTEXTID_CS2,
+                    "classid": "c1",
+                    "instanceid": "0",
+                    "market_hash_name": "AK-47 | Redline (Field-Tested)",
+                    "market_name": "AK-47 | 红线（久经沙场）",
+                },
+            ],
+        }
+        self.assertEqual(inventory_items_from_payload(payload)[0].name, "AK-47 | 红线（久经沙场）")
+
+    def test_steamwebapi_prefers_localized_name_over_english_hash_name(self):
+        payload = {
+            "items": [{
+                "assetid": "a1",
+                "market_hash_name": "Fracture Case",
+                "market_name": "裂空武器箱",
+            }]
+        }
+        result = steamwebapi_items_from_payload(payload)
+        self.assertEqual(result.visible_items[0].name, "裂空武器箱")
+
     def test_inventory_items_from_payload_groups_visible_names(self):
         payload = {
             "assets": [

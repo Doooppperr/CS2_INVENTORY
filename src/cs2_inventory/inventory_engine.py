@@ -143,7 +143,9 @@ def _timestamp_to_local_text(timestamp: int) -> str:
 def _name_from_description(description: Mapping[str, Any] | None) -> str:
     if not description:
         return "未知物品"
-    for key in ("market_hash_name", "market_name", "name"):
+    # market_hash_name is deliberately language-neutral (normally English).
+    # Steam's localized display text is carried by market_name/name.
+    for key in ("market_name", "name", "market_hash_name"):
         value = description.get(key)
         if value:
             return str(value)
@@ -401,7 +403,9 @@ def _iter_steamwebapi_items(payload: Any) -> List[Mapping[str, Any]]:
 
 
 def _steamwebapi_item_name(item: Mapping[str, Any]) -> str:
-    for key in ("markethashname", "market_hash_name", "marketHashName", "marketname", "market_name", "name"):
+    # Prefer the localized fields requested through the API language parameter;
+    # hash-name fields are stable identifiers and normally stay in English.
+    for key in ("marketname", "market_name", "name", "markethashname", "market_hash_name", "marketHashName"):
         value = item.get(key)
         if value:
             return str(value)
@@ -2120,7 +2124,10 @@ def run_max_coverage_query(
         )
         errors.extend(parsed_fetch.errors)
 
-    public_records = merge_asset_records([official_public_records, normal_records])
+    # The official inventory is requested in the configured display language.
+    # Merge it last so its localized names replace third-party hash names for
+    # matching public assets without changing asset identity or totals.
+    public_records = merge_asset_records([normal_records, official_public_records])
     trading_merged = merge_asset_records([trading_records])
     protected_candidates, public_missing_candidates, excluded = classify_hidden_assets(
         trading_merged, public_records, parsed_records, now=now

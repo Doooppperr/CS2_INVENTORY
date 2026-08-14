@@ -181,8 +181,9 @@ class PlatformTests(unittest.TestCase):
         }
         with self.app.app_context():
             job = ScanJob.query.order_by(ScanJob.id).first()
-            with mock.patch("cs2_inventory.worker.run_max_coverage_query", return_value=fake), mock.patch("cs2_inventory.worker.fetch_persona_name", return_value="Steam User"):
+            with mock.patch("cs2_inventory.worker.run_max_coverage_query", return_value=fake) as query, mock.patch("cs2_inventory.worker.fetch_persona_name", return_value="Steam User"):
                 process_job(job.id)
+            self.assertEqual(query.call_args.kwargs["language"], "schinese")
             db.session.expire_all()
             job = db.session.get(ScanJob, job.id)
             self.assertEqual(job.status, "completed")
