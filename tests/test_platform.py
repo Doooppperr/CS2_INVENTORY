@@ -226,6 +226,34 @@ class PlatformTests(unittest.TestCase):
         self.assertIn("库存总量", html)
         self.assertIn("timeZone:'Asia/Shanghai'", html)
 
+    def test_admin_can_open_any_target_snapshot_from_global_list(self):
+        with self.app.app_context():
+            admin = User.query.filter_by(username="cs2inventory_admin").one()
+            target = SteamTarget.query.filter_by(steamid="76561198441561382").one()
+            self.assertIsNone(Subscription.query.filter_by(user_id=admin.id, target_id=target.id).first())
+            snapshot = store_snapshot(target, {
+                "total_items": 1,
+                "item_types": 1,
+                "coverage": "ok",
+                "elapsed_ms": 1,
+                "errors": [],
+                "_assets": [{"asset_key": "admin-view", "name": "测试物品", "amount": 1, "sources": []}],
+            })
+            db.session.commit()
+            target_id, snapshot_id = target.id, snapshot.id
+
+        self.login("cs2inventory_admin")
+        detail = self.client.get(f"/api/monitors/{target_id}")
+        self.assertEqual(detail.status_code, 200, detail.get_json())
+        self.assertEqual(detail.get_json()["snapshot"]["items"], [{"name": "测试物品", "count": 1}])
+        history = self.client.get(f"/api/monitors/{target_id}/snapshots/{snapshot_id}")
+        self.assertEqual(history.status_code, 200, history.get_json())
+
+        html = (Path(__file__).parents[1] / "src" / "cs2_inventory" / "templates" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('class="ghost target-open"', html)
+        self.assertIn("openDetail(Number(b.dataset.id),true)", html)
+        self.assertIn("classList.toggle('hidden',adminView)", html)
+
     def test_health_and_ready(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
         self.assertEqual(self.client.get("/ready").status_code, 200)
