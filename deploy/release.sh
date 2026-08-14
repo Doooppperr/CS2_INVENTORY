@@ -57,7 +57,9 @@ ln -sfn "$release" "$current.next"
 mv -Tf "$current.next" "$current"
 systemctl daemon-reload
 systemctl disable --now cs2-inventory.service >/dev/null 2>&1 || true
-systemctl enable --now cs2-inventory-web cs2-inventory-worker cs2-inventory-schedule.timer
+systemctl enable cs2-inventory-web cs2-inventory-worker cs2-inventory-schedule.timer
+systemctl restart cs2-inventory-web cs2-inventory-worker
+systemctl start cs2-inventory-schedule.timer
 
 healthy=0
 for _ in $(seq 1 30); do
