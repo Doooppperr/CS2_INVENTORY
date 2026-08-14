@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -19,6 +19,7 @@ from cs2_inventory.models import (
     SteamTarget,
     Subscription,
     User,
+    beijing_iso,
     utcnow,
 )
 from cs2_inventory.services import (
@@ -37,6 +38,14 @@ from cs2_inventory.worker import (
 
 
 class PlatformTests(unittest.TestCase):
+    def test_beijing_timestamp_serialization(self):
+        expected = "2026-08-14T18:00:00+08:00"
+        self.assertEqual(beijing_iso(datetime(2026, 8, 14, 10, 0, 0)), expected)
+        self.assertEqual(
+            beijing_iso(datetime(2026, 8, 14, 10, 0, 0, tzinfo=timezone.utc)),
+            expected,
+        )
+
     def test_profile_refresh_accepts_sqlite_naive_datetime(self):
         self.assertFalse(profile_refresh_due(datetime.now(), days=7))
         self.assertTrue(profile_refresh_due(datetime.now() - timedelta(days=8), days=7))
@@ -198,6 +207,7 @@ class PlatformTests(unittest.TestCase):
             snapshot = Snapshot.query.filter_by(target_id=job.target_id).one()
             public = snapshot_public(snapshot)
             self.assertEqual(public["total_items"], 2)
+            self.assertTrue(public["scanned_at"].endswith("+08:00"))
             self.assertEqual({row["name"] for row in public["items"]}, {"Hidden item", "Visible item"})
             self.assertNotIn("protected", json.dumps(public))
 
@@ -214,6 +224,7 @@ class PlatformTests(unittest.TestCase):
         self.assertNotIn("交易保护", html)
         self.assertNotIn("公开可见", html)
         self.assertIn("库存总量", html)
+        self.assertIn("timeZone:'Asia/Shanghai'", html)
 
     def test_health_and_ready(self):
         self.assertEqual(self.client.get("/health").status_code, 200)

@@ -20,6 +20,7 @@ from .models import (
     Subscription,
     SystemState,
     User,
+    beijing_iso,
     utcnow,
 )
 from .unified import evidence_json, public_payload
@@ -68,7 +69,7 @@ def snapshot_public(snapshot: Snapshot, *, include_items: bool = True) -> dict:
         "total_items": snapshot.total_items,
         "item_types": snapshot.item_types,
         "coverage": snapshot.coverage,
-        "scanned_at": snapshot.scanned_at.isoformat(),
+        "scanned_at": beijing_iso(snapshot.scanned_at),
         "elapsed_ms": snapshot.elapsed_ms,
         "errors": json.loads(snapshot.errors_json or "[]"),
     }
@@ -88,8 +89,8 @@ def target_public(target: SteamTarget, *, include_latest: bool = True) -> dict:
         "persona_name": target.persona_name,
         "label": target_label(target),
         "scan_status": target.scan_status,
-        "last_scan_at": target.last_scan_at.isoformat() if target.last_scan_at else None,
-        "last_success_at": target.last_success_at.isoformat() if target.last_success_at else None,
+        "last_scan_at": beijing_iso(target.last_scan_at),
+        "last_success_at": beijing_iso(target.last_success_at),
         "last_error": target.last_error,
         "latest": snapshot_public(snapshot, include_items=False) if snapshot else None,
         "subscriber_count": len(target.subscriptions),
@@ -161,7 +162,7 @@ def delete_monitor(user: User, target: SteamTarget) -> bool:
 
 
 def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
-    public = public_payload(unified, scanned_at=utcnow().isoformat())
+    public = public_payload(unified, scanned_at=beijing_iso(utcnow()))
     blob = gzip.compress(json.dumps(public, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     snapshot = Snapshot(
         target_id=target.id,

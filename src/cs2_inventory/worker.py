@@ -15,7 +15,7 @@ from . import inventory_engine
 from .app import create_app
 from .database import db
 from .inventory_engine import run_max_coverage_query
-from .models import QuotaUsage, ScanBatch, ScanJob, SteamTarget, utcnow
+from .models import QuotaUsage, ScanBatch, ScanJob, SteamTarget, beijing_iso, utcnow
 from .services import prune_expired, quota_allows_scan, state_set, store_snapshot
 from .unified import public_payload, unify_inventory
 
@@ -105,9 +105,9 @@ def refresh_official_usage() -> dict:
         try:
             with urllib.request.urlopen(url, timeout=20) as response:
                 payload = json.loads(response.read())
-            result = {"available": True, "payload": payload, "checked_at": utcnow().isoformat()}
+            result = {"available": True, "payload": payload, "checked_at": beijing_iso(utcnow())}
         except Exception as exc:
-            result = {"available": False, "error": str(exc)[:500], "checked_at": utcnow().isoformat()}
+            result = {"available": False, "error": str(exc)[:500], "checked_at": beijing_iso(utcnow())}
     state_set("official_quota_json", json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     db.session.commit()
     return result
@@ -203,7 +203,10 @@ def process_job(job_id: int) -> None:
             store_snapshot(target, unified)
             job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
         else:
-            job.result_json = json.dumps(public_payload(unified, scanned_at=utcnow().isoformat()), ensure_ascii=False)
+            job.result_json = json.dumps(
+                public_payload(unified, scanned_at=beijing_iso(utcnow())),
+                ensure_ascii=False,
+            )
         job.status = "completed"
         job.finished_at = utcnow()
         db.session.commit()

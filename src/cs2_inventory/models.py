@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import UniqueConstraint
 
@@ -9,6 +9,18 @@ from .database import db
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+BEIJING_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+
+
+def beijing_iso(value: datetime | None) -> str | None:
+    """Serialize UTC/SQLite datetimes as explicit Beijing time."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(BEIJING_TIMEZONE).isoformat(timespec="seconds")
 
 
 class User(db.Model):

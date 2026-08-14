@@ -10,7 +10,7 @@ from collections import defaultdict, deque
 from flask import abort, jsonify, request, session
 
 from .database import db
-from .models import User
+from .models import User, beijing_iso
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
 _attempts: dict[str, deque[float]] = defaultdict(deque)
@@ -82,6 +82,6 @@ def user_json(user: User) -> dict:
         "username": user.username,
         "role": user.role,
         "is_active": user.is_active,
-        "created_at": user.created_at.isoformat() if user.created_at else None,
-        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+        "created_at": beijing_iso(user.created_at),
+        "last_login_at": beijing_iso(user.last_login_at),
     }
