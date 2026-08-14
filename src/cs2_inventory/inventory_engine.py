@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import concurrent.futures
 import dataclasses
 import datetime as _dt
 import json
@@ -1129,7 +1130,7 @@ def localize_asset_records(
     *,
     language: str,
     cache_path: Optional[str] = None,
-    timeout: float = 10.0,
+    timeout: float = 5.0,
 ) -> List[AssetRecord]:
     """Resolve hash names through Steam's official localized item-class view."""
     if language.lower() in {"english", "en"}:
@@ -1144,12 +1145,14 @@ def localize_asset_records(
         if record.name and not re.search(r"[\u4e00-\u9fff]", record.name):
             candidates.setdefault(record.name, record)
 
-    updates: Dict[str, str] = {}
-    for original_name, record in candidates.items():
-        if original_name in name_cache:
-            continue
+    unresolved = {
+        name: record for name, record in candidates.items() if name not in name_cache
+    }
+
+    def fetch_name(entry: Tuple[str, AssetRecord]) -> Tuple[str, str]:
+        original_name, record = entry
         if not record.classid:
-            continue
+            return original_name, ""
         url = STEAM_ITEMCLASS_HOVER_URL.format(
             appid=record.appid or APPID_CS2,
             classid=urllib.parse.quote(record.classid, safe=""),
@@ -1160,14 +1163,21 @@ def localize_asset_records(
                 url,
                 {"content_only": "1", "l": language},
                 timeout=timeout,
-                retries=1,
+                retries=0,
             )
             localized = _localized_market_name_from_hover(html)
         except SteamQueryError:
             localized = ""
-        if localized:
-            updates[original_name] = localized
-            name_cache[original_name] = localized
+        return original_name, localized
+
+    updates: Dict[str, str] = {}
+    if unresolved:
+        workers = min(4, len(unresolved))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            for original_name, localized in executor.map(fetch_name, unresolved.items()):
+                if localized:
+                    updates[original_name] = localized
+                    name_cache[original_name] = localized
 
     if updates:
         with _OBSERVATION_CACHE_LOCK:
@@ -2227,13 +2237,13 @@ def run_max_coverage_query(
         protected_candidates,
         language=language,
         cache_path=observation_cache_path,
-        timeout=min(timeout, 10.0),
+        timeout=min(timeout, 5.0),
     )
     public_missing_candidates = localize_asset_records(
         public_missing_candidates,
         language=language,
         cache_path=observation_cache_path,
-        timeout=min(timeout, 10.0),
+        timeout=min(timeout, 5.0),
     )
 
     if official_total is not None and not owner_records and enforce_budget:
@@ -2297,7 +2307,7 @@ def run_max_coverage_query(
         observed_hidden,
         language=language,
         cache_path=observation_cache_path,
-        timeout=min(timeout, 10.0),
+        timeout=min(timeout, 5.0),
     )
     live_protected = [record for record in live_hidden if record.protection_state == "active"]
     live_public_missing = [record for record in live_hidden if record.protection_state != "active"]
