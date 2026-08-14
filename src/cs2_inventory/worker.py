@@ -7,7 +7,7 @@ import time
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from flask import current_app
 
@@ -43,6 +43,15 @@ class SlidingWindowLimiter:
 
 
 RATE_LIMITER = SlidingWindowLimiter()
+
+
+def profile_refresh_due(updated_at, *, days: int) -> bool:
+    """Handle SQLite datetimes, which are returned without tzinfo."""
+    if updated_at is None:
+        return True
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return updated_at < utcnow() - timedelta(days=days)
 
 
 def recover_interrupted_jobs() -> int:
@@ -186,7 +195,9 @@ def process_job(job_id: int) -> None:
             target = db.session.get(SteamTarget, job.target_id)
             if not target:
                 raise RuntimeError("监控目标已删除")
-            if not target.persona_name or not target.profile_updated_at or target.profile_updated_at < utcnow() - timedelta(days=current_app.config["PROFILE_REFRESH_DAYS"]):
+            if not target.persona_name or profile_refresh_due(
+                target.profile_updated_at, days=current_app.config["PROFILE_REFRESH_DAYS"]
+            ):
                 target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
                 target.profile_updated_at = utcnow()
             store_snapshot(target, unified)

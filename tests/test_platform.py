@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -29,10 +29,18 @@ from cs2_inventory.services import (
     store_snapshot,
 )
 from cs2_inventory.unified import unify_inventory
-from cs2_inventory.worker import process_job, recover_interrupted_jobs
+from cs2_inventory.worker import (
+    process_job,
+    profile_refresh_due,
+    recover_interrupted_jobs,
+)
 
 
 class PlatformTests(unittest.TestCase):
+    def test_profile_refresh_accepts_sqlite_naive_datetime(self):
+        self.assertFalse(profile_refresh_due(datetime.now(), days=7))
+        self.assertTrue(profile_refresh_due(datetime.now() - timedelta(days=8), days=7))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
