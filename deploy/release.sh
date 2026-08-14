@@ -9,10 +9,12 @@ current="$base/current"
 old=$(readlink -f "$current" 2>/dev/null || true)
 state=/var/lib/cs2-inventory
 backup="$state/pre-deploy-$commit"
+legacy_active=$(systemctl is-active cs2-inventory.service 2>/dev/null || true)
 
 rollback() {
   code=$?
   if [[ $code -ne 0 ]]; then
+    systemctl stop cs2-inventory-web cs2-inventory-worker >/dev/null 2>&1 || true
     if [[ -n "$old" && -d "$old" ]]; then ln -sfn "$old" "$current.rollback"; mv -Tf "$current.rollback" "$current"; fi
     if [[ -f "$backup/cs2_inventory.db" ]]; then cp -f "$backup/cs2_inventory.db" "$state/cs2_inventory.db"; chown cs2inventory:cs2inventory "$state/cs2_inventory.db"; fi
     for unit in web worker schedule.service schedule.timer; do
@@ -20,7 +22,11 @@ rollback() {
       [[ -f "$src" ]] && cp -f "$src" "/etc/systemd/system/cs2-inventory-$unit"
     done
     systemctl daemon-reload
-    systemctl restart cs2-inventory-web cs2-inventory-worker || true
+    if [[ "$legacy_active" == "active" ]]; then
+      systemctl enable --now cs2-inventory.service || true
+    else
+      systemctl restart cs2-inventory-web cs2-inventory-worker || true
+    fi
     echo "ROLLBACK old=$old exit=$code" >&2
   fi
   exit "$code"
