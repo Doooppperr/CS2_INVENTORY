@@ -45,6 +45,19 @@ class SlidingWindowLimiter:
 RATE_LIMITER = SlidingWindowLimiter()
 
 
+def recover_interrupted_jobs() -> int:
+    jobs = ScanJob.query.filter_by(status="running").all()
+    for job in jobs:
+        job.status = "queued"
+        job.started_at = None
+        if job.target_id:
+            target = db.session.get(SteamTarget, job.target_id)
+            if target:
+                target.scan_status = "queued"
+    db.session.commit()
+    return len(jobs)
+
+
 def fetch_persona_name(steamid: str) -> str | None:
     key = current_app.config["STEAMWEBAPI_KEY"]
     if not key:
@@ -206,6 +219,7 @@ def process_job(job_id: int) -> None:
 def worker_loop(*, once: bool = False) -> None:
     app = create_app()
     with app.app_context():
+        recover_interrupted_jobs()
         if once:
             while True:
                 job_id = claim_next_job()

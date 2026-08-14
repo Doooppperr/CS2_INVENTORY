@@ -47,6 +47,7 @@ python3 -m venv "$base/venv"
 "$base/venv/bin/pip" install --disable-pip-version-check -q -r "$release/requirements.txt"
 PYTHONPATH="$release/src" CS2_STATE_DIR="$state" INVENTORY_OBSERVATION_CACHE="$state/observations.json" \
   "$base/venv/bin/python" -m cs2_inventory.cli init-db
+chown -R cs2inventory:cs2inventory "$state"
 
 install -o root -g root -m 0644 "$release/deploy/cs2-inventory-web.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$release/deploy/cs2-inventory-worker.service" /etc/systemd/system/

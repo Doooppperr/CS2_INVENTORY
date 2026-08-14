@@ -29,7 +29,7 @@ from cs2_inventory.services import (
     store_snapshot,
 )
 from cs2_inventory.unified import unify_inventory
-from cs2_inventory.worker import process_job
+from cs2_inventory.worker import process_job, recover_interrupted_jobs
 
 
 class PlatformTests(unittest.TestCase):
@@ -191,6 +191,14 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual(public["total_items"], 2)
             self.assertEqual({row["name"] for row in public["items"]}, {"Hidden item", "Visible item"})
             self.assertNotIn("protected", json.dumps(public))
+
+    def test_worker_recovers_interrupted_jobs(self):
+        with self.app.app_context():
+            job = ScanJob.query.order_by(ScanJob.id).first()
+            job.status = "running"
+            db.session.commit()
+            self.assertEqual(recover_interrupted_jobs(), 1)
+            self.assertEqual(db.session.get(ScanJob, job.id).status, "queued")
 
     def test_user_interface_has_only_unified_inventory(self):
         html = (Path(__file__).parents[1] / "src" / "cs2_inventory" / "templates" / "index.html").read_text(encoding="utf-8")
