@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import collections
+import dataclasses
 import io
 import json
 import unittest
@@ -24,6 +25,7 @@ from cs2_inventory.inventory_engine import (
     fetch_steamwebapi_raw_inventory,
     group_records_by_name,
     inventory_items_from_payload,
+    localize_asset_records,
     merge_asset_records,
     seed_observation_cache,
     parse_history_html_payload,
@@ -42,6 +44,33 @@ from cs2_inventory.inventory_engine import (
 
 
 class CS2InventoryQueryTests(unittest.TestCase):
+    def test_hidden_hash_name_is_localized_from_official_itemclass_hover(self):
+        import tempfile
+        from pathlib import Path
+
+        record = AssetRecord(
+            assetid="a1",
+            classid="7993040223",
+            instanceid="8754225978",
+            name="AWP | Exoskeleton (Factory New)",
+            appid="730",
+            contextid="2",
+        )
+        html = """<script>BuildHover( 'item', {"appid":"730","market_hash_name":"AWP | Exoskeleton (Factory New)","market_name":"AWP | 亡灵之主 (崭新出厂)"} );</script>"""
+        with tempfile.TemporaryDirectory() as directory:
+            cache = str(Path(directory) / "observations.json")
+            with mock.patch(
+                "cs2_inventory.inventory_engine.http_get_text",
+                return_value=(html, "https://steamcommunity.com/"),
+            ) as request:
+                localized = localize_asset_records(
+                    [record, dataclasses.replace(record, assetid="a2")],
+                    language="schinese",
+                    cache_path=cache,
+                )
+            self.assertEqual(request.call_count, 1)
+            self.assertEqual([row.name for row in localized], ["AWP | 亡灵之主 (崭新出厂)"] * 2)
+
     def test_inventory_prefers_localized_market_name_over_english_hash_name(self):
         payload = {
             "assets": [

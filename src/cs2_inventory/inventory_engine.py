@@ -31,6 +31,7 @@ STEAM_INVENTORY_URL = "https://steamcommunity.com/inventory/{steamid}/{appid}/{c
 STEAM_TRADE_HISTORY_URL = "https://api.steampowered.com/IEconService/GetTradeHistory/v1/"
 STEAM_INVENTORY_HISTORY_URL = "https://steamcommunity.com/profiles/{steamid}/inventoryhistory/"
 STEAMWEBAPI_INVENTORY_URL = "https://www.steamwebapi.com/steam/api/inventory"
+STEAM_ITEMCLASS_HOVER_URL = "https://steamcommunity.com/economy/itemclasshover/{appid}/{classid}/{instanceid}"
 DEFAULT_LANGUAGE = "schinese"
 DEFAULT_USER_AGENT = "cs2-inventory-query/1.0 (+https://steamcommunity.com/)"
 DEFAULT_STEAMWEBAPI_KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "steamwebapi_key.txt")
@@ -1105,6 +1106,83 @@ def _write_observation_cache(path: Optional[str], data: Dict[str, Any]) -> None:
 
 
 _OBSERVATION_CACHE_LOCK = threading.RLock()
+_LOCALIZED_NAMES_KEY = "__localized_market_names__"
+
+
+def _localized_market_name_from_hover(html: str) -> str:
+    marker = "BuildHover("
+    marker_index = html.find(marker)
+    object_index = html.find("{", marker_index + len(marker)) if marker_index >= 0 else -1
+    if object_index < 0:
+        return ""
+    try:
+        payload, _end = json.JSONDecoder().raw_decode(html[object_index:])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, Mapping):
+        return ""
+    return _string(payload.get("market_name") or payload.get("name"))
+
+
+def localize_asset_records(
+    records: Sequence[AssetRecord],
+    *,
+    language: str,
+    cache_path: Optional[str] = None,
+    timeout: float = 10.0,
+) -> List[AssetRecord]:
+    """Resolve hash names through Steam's official localized item-class view."""
+    if language.lower() in {"english", "en"}:
+        return list(records)
+    with _OBSERVATION_CACHE_LOCK:
+        cache = _read_observation_cache(cache_path)
+        stored = cache.get(_LOCALIZED_NAMES_KEY)
+        name_cache = dict(stored) if isinstance(stored, dict) else {}
+
+    candidates: Dict[str, AssetRecord] = {}
+    for record in records:
+        if record.name and not re.search(r"[\u4e00-\u9fff]", record.name):
+            candidates.setdefault(record.name, record)
+
+    updates: Dict[str, str] = {}
+    for original_name, record in candidates.items():
+        if original_name in name_cache:
+            continue
+        if not record.classid:
+            continue
+        url = STEAM_ITEMCLASS_HOVER_URL.format(
+            appid=record.appid or APPID_CS2,
+            classid=urllib.parse.quote(record.classid, safe=""),
+            instanceid=urllib.parse.quote(record.instanceid or "0", safe=""),
+        )
+        try:
+            html, _final_url = http_get_text(
+                url,
+                {"content_only": "1", "l": language},
+                timeout=timeout,
+                retries=1,
+            )
+            localized = _localized_market_name_from_hover(html)
+        except SteamQueryError:
+            localized = ""
+        if localized:
+            updates[original_name] = localized
+            name_cache[original_name] = localized
+
+    if updates:
+        with _OBSERVATION_CACHE_LOCK:
+            cache = _read_observation_cache(cache_path)
+            current = cache.get(_LOCALIZED_NAMES_KEY)
+            merged = dict(current) if isinstance(current, dict) else {}
+            merged.update(updates)
+            cache[_LOCALIZED_NAMES_KEY] = merged
+            _write_observation_cache(cache_path, cache)
+            name_cache = merged
+
+    return [
+        dataclasses.replace(record, name=name_cache.get(record.name, record.name))
+        for record in records
+    ]
 
 
 def _apply_observation_cache_unlocked(
@@ -2145,6 +2223,19 @@ def run_max_coverage_query(
             parsed_records=parsed_records,
         )
 
+    protected_candidates = localize_asset_records(
+        protected_candidates,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 10.0),
+    )
+    public_missing_candidates = localize_asset_records(
+        public_missing_candidates,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 10.0),
+    )
+
     if official_total is not None and not owner_records and enforce_budget:
         hidden_budget = max(0, int(official_total) - official_returned)
         protected_candidates, public_missing_candidates, budget_excluded, budget_unverified = apply_hidden_budget(
@@ -2201,6 +2292,12 @@ def run_max_coverage_query(
         {record.assetid for record in public_records},
         cache_path=observation_cache_path,
         now=now,
+    )
+    observed_hidden = localize_asset_records(
+        observed_hidden,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 10.0),
     )
     live_protected = [record for record in live_hidden if record.protection_state == "active"]
     live_public_missing = [record for record in live_hidden if record.protection_state != "active"]
