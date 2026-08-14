@@ -1,0 +1,25 @@
+[Unit]
+Description=CS2 Inventory Monitor Web
+After=network-online.target
+
+[Service]
+Type=simple
+User=cs2inventory
+Group=cs2inventory
+WorkingDirectory=/opt/cs2-inventory/current
+EnvironmentFile=/etc/cs2-inventory.env
+Environment=PYTHONPATH=/opt/cs2-inventory/current/src
+Environment=CS2_STATE_DIR=/var/lib/cs2-inventory
+Environment=INVENTORY_OBSERVATION_CACHE=/var/lib/cs2-inventory/observations.json
+ExecStart=/opt/cs2-inventory/venv/bin/gunicorn --workers 1 --threads 4 --bind 127.0.0.1:5060 --access-logfile - --error-logfile - "cs2_inventory.app:create_app()"
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=cs2-inventory
+StateDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

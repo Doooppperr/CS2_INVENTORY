@@ -1,0 +1,25 @@
+[Unit]
+Description=CS2 Inventory Monitor Scanner
+After=network-online.target cs2-inventory-web.service
+
+[Service]
+Type=simple
+User=cs2inventory
+Group=cs2inventory
+WorkingDirectory=/opt/cs2-inventory/current
+EnvironmentFile=/etc/cs2-inventory.env
+Environment=PYTHONPATH=/opt/cs2-inventory/current/src
+Environment=CS2_STATE_DIR=/var/lib/cs2-inventory
+Environment=INVENTORY_OBSERVATION_CACHE=/var/lib/cs2-inventory/observations.json
+ExecStart=/opt/cs2-inventory/venv/bin/python -m cs2_inventory.worker
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=cs2-inventory
+StateDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

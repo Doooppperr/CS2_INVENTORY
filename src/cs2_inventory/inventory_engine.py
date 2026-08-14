@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Counter, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Counter, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 APPID_CS2 = 730
 CONTEXTID_CS2 = "2"
@@ -35,6 +35,7 @@ DEFAULT_LANGUAGE = "schinese"
 DEFAULT_USER_AGENT = "cs2-inventory-query/1.0 (+https://steamcommunity.com/)"
 DEFAULT_STEAMWEBAPI_KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "steamwebapi_key.txt")
 DEFAULT_OBSERVATION_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inventory_observations.json")
+REQUEST_THROTTLE: Callable[[], None] | None = None
 
 
 class SteamQueryError(RuntimeError):
@@ -225,6 +226,8 @@ def http_get_json_with_headers(
         headers["Cookie"] = cookie
     last_error: BaseException | None = None
     for attempt in range(retries + 1):
+        if REQUEST_THROTTLE is not None and full_url.startswith(STEAMWEBAPI_INVENTORY_URL):
+            REQUEST_THROTTLE()
         request = urllib.request.Request(full_url, headers=headers, method="GET")
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:

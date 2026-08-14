@@ -18,8 +18,10 @@ build/
 steamwebapi_key.txt
 instance/
 var/
+var*/
 local_archive/
-MODIFIED_FILE
-DIFF_FILE
-VERIFICATION.txt
-ROLLBACK.sh
+*_TEST_OUTPUT.txt
+/MODIFIED_FILE
+/DIFF_FILE
+/VERIFICATION.txt
+/ROLLBACK.sh

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily CS2 inventory snapshot at 18:00 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 18:00:00 Asia/Shanghai
+Persistent=true
+AccuracySec=1min
+Unit=cs2-inventory-schedule.service
+
+[Install]
+WantedBy=timers.target

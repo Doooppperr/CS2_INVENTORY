@@ -4,10 +4,34 @@ CS2 Inventory 是一个按 SteamID64 监控 CS2 库存的 Web 应用。后端通
 
 正式源码位于 `src/cs2_inventory/`，测试位于 `tests/`，部署文件位于 `deploy/`，开发与运维文档位于 `docs/`。
 
-## 基线测试
+## 功能
+
+- 开放注册、用户登录和管理员整合视图。
+- 全平台 35 个唯一 SteamID，多用户共享同一目标的扫描与快照。
+- 首次扫描异步执行，每天北京时间 18:00 自动更新。
+- 快照保留七天，支持历史查看及新增、移除、数量变化。
+- 所有可靠资产统一展示；内部分类只用于最大化覆盖，不出现在用户界面。
+- 监控列表每页 20 条，昵称显示为 `Steam昵称 (SteamID64)`。
+
+## 本地运行
 
 ```bash
-python -m unittest discover -s tests -v
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+export PYTHONPATH="$PWD/src"
+export CS2_STATE_DIR="$PWD/var"
+export CS2_COOKIE_PATH=/
+.venv/bin/flask --app 'cs2_inventory.app:create_app()' run
+```
+
+Windows PowerShell 将环境变量改为 `$env:PYTHONPATH="$PWD\src"` 等价形式。
+
+## 测试
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
 > 本仓库不保存 API Key、生产数据库、真实库存响应或发布归档。
+
+完整设计、接口、额度、部署和安全说明见 [`docs/`](docs/)。
