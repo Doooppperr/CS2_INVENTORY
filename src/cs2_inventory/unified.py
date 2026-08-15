@@ -14,22 +14,35 @@ INTERNAL_GROUPS = (
 
 
 def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
-    """Merge all reliable categories by assetid without exposing protection state."""
+    """Merge reliable categories by assetid and retain explicit live protection."""
     assets: dict[str, dict[str, Any]] = {}
     synthetic_index = 0
     for group_name in INTERNAL_GROUPS:
+        is_trade_protected = group_name == "protected_live"
         for row in result.get(group_name) or []:
             name = str(row.get("name") or "Unknown item")
             count = max(1, int(row.get("count", 1) or 1))
             assetids = [str(value) for value in (row.get("assetids") or []) if value]
             sources = [str(value) for value in (row.get("sources") or [])]
             for assetid in assetids:
-                assets[assetid] = {"asset_key": assetid, "name": name, "amount": 1, "sources": sources}
+                assets[assetid] = {
+                    "asset_key": assetid,
+                    "name": name,
+                    "amount": 1,
+                    "sources": sources,
+                    "is_trade_protected": is_trade_protected,
+                }
             missing = max(0, count - len(assetids))
             for _ in range(missing):
                 synthetic_index += 1
                 key = f"synthetic:{name}:{synthetic_index}"
-                assets[key] = {"asset_key": key, "name": name, "amount": 1, "sources": sources}
+                assets[key] = {
+                    "asset_key": key,
+                    "name": name,
+                    "amount": 1,
+                    "sources": sources,
+                    "is_trade_protected": is_trade_protected,
+                }
 
     counts: collections.Counter[str] = collections.Counter()
     for asset in assets.values():

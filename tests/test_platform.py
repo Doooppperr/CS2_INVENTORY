@@ -166,16 +166,21 @@ class PlatformTests(unittest.TestCase):
     def test_unified_inventory_includes_all_groups_and_deduplicates_assetid(self):
         result = {
             "steamid": "76561198441561382",
-            "protected_live": [{"name": "Item A", "count": 1, "assetids": ["1"], "sources": ["a"]}],
+            "protected_live": [{"name": "Item A", "count": 2, "assetids": ["1", "5"], "sources": ["a"]}],
+            "protected_observed": [{"name": "Item D", "count": 1, "assetids": ["6"], "sources": ["cache"]}],
             "public_missing_live": [{"name": "Item A", "count": 1, "assetids": ["1"], "sources": ["b"]}, {"name": "Item B", "count": 1, "assetids": ["2"]}],
             "public": [{"name": "Item C", "count": 2, "assetids": ["3", "4"]}],
             "coverage": {"status": "complete"},
             "elapsed_ms": 10,
         }
         unified = unify_inventory(result)
-        self.assertEqual(unified["total_items"], 4)
-        self.assertEqual(unified["item_types"], 3)
-        self.assertEqual({row["name"]: row["count"] for row in unified["items"]}, {"Item A": 1, "Item B": 1, "Item C": 2})
+        self.assertEqual(unified["total_items"], 6)
+        self.assertEqual(unified["item_types"], 4)
+        self.assertEqual({row["name"]: row["count"] for row in unified["items"]}, {"Item A": 2, "Item B": 1, "Item C": 2, "Item D": 1})
+        protection = {row["asset_key"]: row["is_trade_protected"] for row in unified["_assets"]}
+        self.assertTrue(protection["5"])
+        self.assertFalse(protection["1"])
+        self.assertFalse(protection["6"])
         self.assertNotIn("protected", json.dumps({key: value for key, value in unified.items() if not key.startswith("_")}))
 
     def test_snapshot_diff_and_eight_day_prune(self):
@@ -243,9 +248,11 @@ class PlatformTests(unittest.TestCase):
         with self.app.app_context():
             target = SteamTarget.query.first()
             first = store_snapshot(target, {
-                "total_items": 2, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
+                "total_items": 5, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
                 "errors": [], "_assets": [
-                    {"asset_key": "abstract-old", "name": "抽象派", "amount": 1, "sources": []},
+                    {"asset_key": f"abstract-{index}", "name": "抽象派", "amount": 1, "sources": []}
+                    for index in range(4)
+                ] + [
                     {"asset_key": "beta", "name": "先前物品", "amount": 1, "sources": []},
                 ],
             })
@@ -254,18 +261,43 @@ class PlatformTests(unittest.TestCase):
                 item.first_seen_at = old_time
             db.session.commit()
             latest = store_snapshot(target, {
-                "total_items": 3, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
+                "total_items": 7, "item_types": 3, "coverage": "ok", "elapsed_ms": 1,
                 "errors": [], "_assets": [
-                    {"asset_key": "abstract-old", "name": "抽象派", "amount": 1, "sources": []},
-                    {"asset_key": "abstract-new", "name": "抽象派", "amount": 1, "sources": []},
+                    *[
+                        {"asset_key": f"abstract-{index}", "name": "抽象派", "amount": 1, "sources": []}
+                        for index in range(4)
+                    ],
+                    {"asset_key": "abstract-protected", "name": "抽象派", "amount": 1, "sources": [], "is_trade_protected": True},
+                    {"asset_key": "normal-new", "name": "普通新物品", "amount": 1, "sources": []},
                     {"asset_key": "beta", "name": "先前物品", "amount": 1, "sources": []},
                 ],
             })
             db.session.commit()
             public = snapshot_public(latest)
-            self.assertEqual(public["items"][0], {"name": "抽象派", "count": 2})
+            self.assertEqual(public["items"][0], {"name": "抽象派", "count": 1, "is_trade_protected": True})
+            self.assertEqual(public["items"][1], {"name": "普通新物品", "count": 1, "is_trade_protected": False})
+            self.assertIn({"name": "抽象派", "count": 4, "is_trade_protected": False}, public["items"])
+            self.assertEqual(sum(row["count"] for row in public["items"] if row["name"] == "抽象派"), 5)
+            self.assertEqual(public["item_types"], 3)
             self.assertNotIn("first_seen", json.dumps(public, ensure_ascii=False))
-            self.assertEqual(SnapshotItem.query.filter_by(snapshot_id=latest.id).count(), 3)
+            self.assertEqual(SnapshotItem.query.filter_by(snapshot_id=latest.id).count(), 7)
+
+            released = store_snapshot(target, {
+                "total_items": 7, "item_types": 3, "coverage": "ok", "elapsed_ms": 1,
+                "errors": [], "_assets": [
+                    *[
+                        {"asset_key": f"abstract-{index}", "name": "抽象派", "amount": 1, "sources": []}
+                        for index in range(4)
+                    ],
+                    {"asset_key": "abstract-protected", "name": "抽象派", "amount": 1, "sources": []},
+                    {"asset_key": "normal-new", "name": "普通新物品", "amount": 1, "sources": []},
+                    {"asset_key": "beta", "name": "先前物品", "amount": 1, "sources": []},
+                ],
+            })
+            db.session.commit()
+            released_public = snapshot_public(released)
+            abstract_rows = [row for row in released_public["items"] if row["name"] == "抽象派"]
+            self.assertEqual(abstract_rows, [{"name": "抽象派", "count": 5, "is_trade_protected": False}])
 
     def test_daily_batch_sets_maintenance_and_queues_all_targets(self):
         with self.app.app_context():
@@ -277,7 +309,7 @@ class PlatformTests(unittest.TestCase):
             from cs2_inventory.services import maintenance_active
             self.assertTrue(maintenance_active())
 
-    def test_worker_stores_unified_snapshot_without_public_classification(self):
+    def test_worker_stores_only_explicit_live_protection_for_public_display(self):
         fake = {
             "steamid": "76561198441561382",
             "protected_live": [{"name": "Hidden item", "count": 1, "assetids": ["p1"], "sources": ["internal"]}],
@@ -298,7 +330,8 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual(public["total_items"], 2)
             self.assertTrue(public["scanned_at"].endswith("+08:00"))
             self.assertEqual({row["name"] for row in public["items"]}, {"Hidden item", "Visible item"})
-            self.assertNotIn("protected", json.dumps(public))
+            self.assertEqual(public["items"][0], {"name": "Hidden item", "count": 1, "is_trade_protected": True})
+            self.assertFalse(next(row for row in public["items"] if row["name"] == "Visible item")["is_trade_protected"])
 
     def test_worker_recovers_interrupted_jobs(self):
         with self.app.app_context():
@@ -310,10 +343,11 @@ class PlatformTests(unittest.TestCase):
 
     def test_user_interface_has_only_unified_inventory(self):
         html = (Path(__file__).parents[1] / "src" / "cs2_inventory" / "templates" / "index.html").read_text(encoding="utf-8")
-        self.assertNotIn("交易保护", html)
         self.assertNotIn("公开可见", html)
         self.assertNotIn("库存总量", html)
         self.assertIn("itemSearch", html)
+        self.assertIn("protected-item", html)
+        self.assertIn("\\u5904\\u4e8e\\u4ea4\\u6613\\u4fdd\\u62a4\\u6216\\u8fd1\\u65e5\\u521a\\u7ed3\\u675f", html)
         self.assertIn('data-days="1"', html)
         self.assertIn('data-days="3"', html)
         self.assertIn('data-days="7"', html)
@@ -339,7 +373,10 @@ class PlatformTests(unittest.TestCase):
         self.login("cs2inventory_admin")
         detail = self.client.get(f"/api/monitors/{target_id}")
         self.assertEqual(detail.status_code, 200, detail.get_json())
-        self.assertEqual(detail.get_json()["snapshot"]["items"], [{"name": "测试物品", "count": 1}])
+        self.assertEqual(
+            detail.get_json()["snapshot"]["items"],
+            [{"name": "测试物品", "count": 1, "is_trade_protected": False}],
+        )
         history = self.client.get(f"/api/monitors/{target_id}/snapshots/{snapshot_id}")
         self.assertEqual(history.status_code, 200, history.get_json())
 

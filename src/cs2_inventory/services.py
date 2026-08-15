@@ -75,19 +75,31 @@ def snapshot_public(snapshot: Snapshot, *, include_items: bool = True) -> dict:
     }
     if include_items:
         rows = Counter()
-        newest_discovery: dict[str, float] = {}
+        newest_discovery: dict[tuple[str, bool], float] = {}
         for item in snapshot.items:
-            rows[item.name] += item.amount
+            key = (item.name, bool(item.is_trade_protected))
+            rows[key] += item.amount
             seen = item.first_seen_at or snapshot.scanned_at
             seen_key = _datetime_sort_key(seen)
-            current = newest_discovery.get(item.name)
+            current = newest_discovery.get(key)
             if current is None or seen_key > current:
-                newest_discovery[item.name] = seen_key
-        ordered_names = sorted(
+                newest_discovery[key] = seen_key
+        ordered_groups = sorted(
             rows,
-            key=lambda name: (-newest_discovery[name], name.casefold()),
+            key=lambda key: (
+                -int(key[1]),
+                -newest_discovery[key],
+                key[0].casefold(),
+            ),
         )
-        data["items"] = [{"name": name, "count": rows[name]} for name in ordered_names]
+        data["items"] = [
+            {
+                "name": name,
+                "count": rows[(name, is_trade_protected)],
+                "is_trade_protected": is_trade_protected,
+            }
+            for name, is_trade_protected in ordered_groups
+        ]
     return data
 
 
@@ -206,6 +218,7 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
             amount=int(asset.get("amount", 1)),
             evidence_json=evidence_json(asset),
             first_seen_at=previous_seen.get(asset["asset_key"], scanned_at),
+            is_trade_protected=bool(asset.get("is_trade_protected", False)),
         ))
     target.last_success_at = snapshot.scanned_at
     target.last_scan_at = snapshot.scanned_at

@@ -87,6 +87,7 @@ class SnapshotItem(db.Model):
     amount = db.Column(db.Integer, nullable=False, default=1)
     evidence_json = db.Column(db.Text, nullable=False, default="{}")
     first_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    is_trade_protected = db.Column(db.Boolean, nullable=False, default=False)
     snapshot = db.relationship("Snapshot", back_populates="items")
     __table_args__ = (UniqueConstraint("snapshot_id", "asset_key", name="uq_snapshot_asset"),)
 

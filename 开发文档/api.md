@@ -15,5 +15,5 @@
 - `POST api/admin/targets/<id>/scan`：手动重扫。
 - `GET health|ready`：进程与数据库健康检查。
 
-快照公开结构仅包含 `items`、`total_items`、`item_types`、`coverage`、`scanned_at`、`elapsed_ms` 和 `errors`。
+快照公开结构仅包含 `items`、`total_items`、`item_types`、`coverage`、`scanned_at`、`elapsed_ms` 和 `errors`；每个 `items` 元素包含 `name`、`count`、`is_trade_protected`。同名物品会按明确交易保护状态拆分为最多两行，保护行始终置顶。
 物品首次发现时间仅用于服务端排序，不通过公开快照结构返回。管理员用户列表额外返回加密副本解密后的当前密码及改密时间，并禁止响应缓存。
