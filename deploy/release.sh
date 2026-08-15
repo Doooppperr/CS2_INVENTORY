@@ -35,6 +35,7 @@ trap rollback EXIT
 
 install -d -o cs2inventory -g cs2inventory -m 0750 "$state"
 install -d -o root -g root -m 0755 "$backup" "$release"
+systemctl stop cs2-inventory-web cs2-inventory-worker
 [[ -f "$state/cs2_inventory.db" ]] && cp -a "$state/cs2_inventory.db" "$backup/cs2_inventory.db"
 for unit in web worker schedule.service schedule.timer; do
   src="/etc/systemd/system/cs2-inventory-$unit"
