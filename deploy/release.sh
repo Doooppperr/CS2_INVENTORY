@@ -45,6 +45,9 @@ tar -xzf "$archive" -C "$release"
 chown -R root:root "$release"
 python3 -m venv "$base/venv"
 "$base/venv/bin/pip" install --disable-pip-version-check -q -r "$release/requirements.txt"
+(cd "$release" && PYTHONPATH="$release/src" CS2_STATE_DIR="$state" \
+  INVENTORY_OBSERVATION_CACHE="$state/observations.json" \
+  "$base/venv/bin/alembic" upgrade head)
 PYTHONPATH="$release/src" CS2_STATE_DIR="$state" INVENTORY_OBSERVATION_CACHE="$state/observations.json" \
   "$base/venv/bin/python" -m cs2_inventory.cli init-db
 chown -R cs2inventory:cs2inventory "$state"

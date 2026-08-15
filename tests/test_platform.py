@@ -16,6 +16,7 @@ from cs2_inventory.models import (
     ScanBatch,
     ScanJob,
     Snapshot,
+    SnapshotItem,
     SteamTarget,
     Subscription,
     User,
@@ -58,6 +59,7 @@ class PlatformTests(unittest.TestCase):
             "STATE_DIR": root,
             "SQLALCHEMY_DATABASE_URI": f"sqlite:///{(root / 'test.db').as_posix()}",
             "SECRET_KEY": "test-secret",
+            "PASSWORD_VAULT_KEY": "test-password-vault-key",
             "SESSION_COOKIE_PATH": "/",
             "STEAMWEBAPI_KEY": "test-key",
             "OBSERVATION_CACHE": str(root / "observations.json"),
@@ -127,6 +129,18 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(len(data["items"]), 20)
         self.assertEqual(data["pages"], 2)
 
+    def test_monitor_summary_uses_latest_scan_across_all_pages(self):
+        self.login()
+        expected = datetime(2026, 8, 15, 1, 30, tzinfo=timezone.utc)
+        with self.app.app_context():
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            for index in range(18):
+                target, _job, _created = add_monitor(user, f"7656119{3000000000 + index:010d}")
+            target.last_scan_at = expected
+            db.session.commit()
+        data = self.client.get("/api/monitors?page=1").get_json()
+        self.assertEqual(data["latest_scan_at"], "2026-08-15T09:30:00+08:00")
+
     def test_platform_cap_is_thirty_five_unique_targets(self):
         with self.app.app_context():
             user = User.query.filter_by(username="cs2inventory_user").one()
@@ -164,7 +178,7 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual({row["name"]: row["count"] for row in unified["items"]}, {"Item A": 1, "Item B": 1, "Item C": 2})
         self.assertNotIn("protected", json.dumps({key: value for key, value in unified.items() if not key.startswith("_")}))
 
-    def test_snapshot_diff_and_seven_day_prune(self):
+    def test_snapshot_diff_and_eight_day_prune(self):
         with self.app.app_context():
             target = SteamTarget.query.first()
             first = store_snapshot(target, {"total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [], "_assets": [{"asset_key": "1", "name": "A", "amount": 1, "sources": []}]})
@@ -172,11 +186,86 @@ class PlatformTests(unittest.TestCase):
             second = store_snapshot(target, {"total_items": 2, "item_types": 2, "coverage": "ok", "elapsed_ms": 1, "errors": [], "_assets": [{"asset_key": "1", "name": "A", "amount": 1, "sources": []}, {"asset_key": "2", "name": "B", "amount": 1, "sources": []}]})
             db.session.commit()
             self.assertEqual(snapshot_diff(second, first)["added"], [{"name": "B", "count": 1}])
-            first.scanned_at = utcnow() - timedelta(days=8)
+            first.scanned_at = utcnow() - timedelta(days=9)
             db.session.commit()
             result = prune_expired()
             self.assertEqual(result["snapshots"], 1)
             self.assertIsNone(db.session.get(Snapshot, first.id))
+
+    def test_user_changed_password_is_visible_to_admin_but_not_stored_plaintext(self):
+        token = self.login()
+        response = self.client.post(
+            "/api/auth/password",
+            json={"old_password": "platform-test-password", "new_password": "visible-new-password"},
+            headers={"X-CSRF-Token": token},
+        )
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.client.post("/api/auth/logout", headers={"X-CSRF-Token": token})
+        self.login("cs2inventory_admin")
+        response = self.client.get("/api/admin/users")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        row = next(item for item in response.get_json()["items"] if item["username"] == "cs2inventory_user")
+        self.assertEqual(row["password"], "visible-new-password")
+        self.assertTrue(row["password_available"])
+        self.assertIsNotNone(row["password_changed_at"])
+        with self.app.app_context():
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            self.assertNotEqual(user.password_ciphertext, "visible-new-password")
+            self.assertNotIn("visible-new-password", user.password_hash)
+
+    def test_compare_endpoint_supports_latest_to_one_three_and_seven_day_baselines(self):
+        with self.app.app_context():
+            target = SteamTarget.query.first()
+            baseline = store_snapshot(target, {
+                "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1,
+                "errors": [], "_assets": [{"asset_key": "old", "name": "Old", "amount": 1, "sources": []}],
+            })
+            baseline.scanned_at = utcnow() - timedelta(days=7, minutes=1)
+            db.session.commit()
+            current = store_snapshot(target, {
+                "total_items": 2, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
+                "errors": [], "_assets": [
+                    {"asset_key": "old", "name": "Old", "amount": 1, "sources": []},
+                    {"asset_key": "new", "name": "New", "amount": 1, "sources": []},
+                ],
+            })
+            db.session.commit()
+            target_id, baseline_id, current_id = target.id, baseline.id, current.id
+        self.login()
+        response = self.client.get(f"/api/monitors/{target_id}/compare?days=7")
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["current"]["id"], current_id)
+        self.assertEqual(response.get_json()["baseline"]["id"], baseline_id)
+        self.assertEqual(response.get_json()["diff"]["added"], [{"name": "New", "count": 1}])
+        self.assertEqual(self.client.get(f"/api/monitors/{target_id}/compare?days=2").status_code, 400)
+
+    def test_item_groups_are_sorted_by_newest_constituent_without_exposing_time(self):
+        with self.app.app_context():
+            target = SteamTarget.query.first()
+            first = store_snapshot(target, {
+                "total_items": 2, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
+                "errors": [], "_assets": [
+                    {"asset_key": "abstract-old", "name": "抽象派", "amount": 1, "sources": []},
+                    {"asset_key": "beta", "name": "先前物品", "amount": 1, "sources": []},
+                ],
+            })
+            old_time = utcnow() - timedelta(days=3)
+            for item in first.items:
+                item.first_seen_at = old_time
+            db.session.commit()
+            latest = store_snapshot(target, {
+                "total_items": 3, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
+                "errors": [], "_assets": [
+                    {"asset_key": "abstract-old", "name": "抽象派", "amount": 1, "sources": []},
+                    {"asset_key": "abstract-new", "name": "抽象派", "amount": 1, "sources": []},
+                    {"asset_key": "beta", "name": "先前物品", "amount": 1, "sources": []},
+                ],
+            })
+            db.session.commit()
+            public = snapshot_public(latest)
+            self.assertEqual(public["items"][0], {"name": "抽象派", "count": 2})
+            self.assertNotIn("first_seen", json.dumps(public, ensure_ascii=False))
+            self.assertEqual(SnapshotItem.query.filter_by(snapshot_id=latest.id).count(), 3)
 
     def test_daily_batch_sets_maintenance_and_queues_all_targets(self):
         with self.app.app_context():
@@ -223,7 +312,12 @@ class PlatformTests(unittest.TestCase):
         html = (Path(__file__).parents[1] / "src" / "cs2_inventory" / "templates" / "index.html").read_text(encoding="utf-8")
         self.assertNotIn("交易保护", html)
         self.assertNotIn("公开可见", html)
-        self.assertIn("库存总量", html)
+        self.assertNotIn("库存总量", html)
+        self.assertIn("itemSearch", html)
+        self.assertIn('data-days="1"', html)
+        self.assertIn('data-days="3"', html)
+        self.assertIn('data-days="7"', html)
+        self.assertNotIn("latest_detected_at", html)
         self.assertIn("timeZone:'Asia/Shanghai'", html)
 
     def test_admin_can_open_any_target_snapshot_from_global_list(self):
@@ -250,9 +344,9 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200, history.get_json())
 
         html = (Path(__file__).parents[1] / "src" / "cs2_inventory" / "templates" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('class="ghost target-open"', html)
-        self.assertIn("openDetail(Number(b.dataset.id),true)", html)
-        self.assertIn("classList.toggle('hidden',adminView)", html)
+        self.assertIn('class="outline-primary target-open"', html)
+        self.assertIn("source=admin", html)
+        self.assertEqual(self.client.get(f"/monitors/{target_id}").status_code, 200)
 
     def test_health_and_ready(self):
         self.assertEqual(self.client.get("/health").status_code, 200)

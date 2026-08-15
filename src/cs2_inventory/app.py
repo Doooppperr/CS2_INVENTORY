@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from flask import Flask, jsonify, render_template, request, session
 from sqlalchemy import func, text
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import check_password_hash
 
 from .auth import (
     USERNAME_RE,
@@ -19,7 +19,16 @@ from .auth import (
 )
 from .config import Config
 from .database import db
-from .models import ScanJob, Snapshot, SteamTarget, Subscription, User, utcnow
+from .models import (
+    ScanJob,
+    Snapshot,
+    SteamTarget,
+    Subscription,
+    User,
+    beijing_iso,
+    utcnow,
+)
+from .password_vault import recover_user_password, set_user_password
 from .services import (
     add_monitor,
     delete_monitor,
@@ -84,6 +93,11 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         csrf_token()
         return render_template("index.html")
 
+    @app.get("/monitors/<int:_target_id>")
+    def monitor_page(_target_id):
+        csrf_token()
+        return render_template("index.html")
+
     @app.get("/health")
     def health():
         return jsonify({"ok": True})
@@ -121,7 +135,8 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"error": "密码长度必须为 8-72"}), 400
         if User.query.filter(func.lower(User.username) == username.lower()).first():
             return jsonify({"error": "用户名已存在"}), 409
-        user = User(username=username, password_hash=generate_password_hash(password), role="user")
+        user = User(username=username, password_hash="", role="user")
+        set_user_password(user, password)
         db.session.add(user)
         db.session.commit()
         return jsonify({"user": user_json(user)}), 201
@@ -166,7 +181,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"error": "当前密码错误"}), 400
         if len(new_password) < 8 or len(new_password) > 72:
             return jsonify({"error": "新密码长度必须为 8-72"}), 400
-        user.password_hash = generate_password_hash(new_password)
+        set_user_password(user, new_password)
         db.session.commit()
         return jsonify({"ok": True})
 
@@ -176,6 +191,12 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         page = max(1, request.args.get("page", 1, type=int))
         query = SteamTarget.query.join(Subscription).filter(Subscription.user_id == user.id).order_by(SteamTarget.created_at.desc())
         pagination = query.paginate(page=page, per_page=app.config["PAGE_SIZE"], error_out=False)
+        latest_scan_at = (
+            db.session.query(func.max(SteamTarget.last_scan_at))
+            .join(Subscription, Subscription.target_id == SteamTarget.id)
+            .filter(Subscription.user_id == user.id)
+            .scalar()
+        )
         return jsonify({
             "items": [target_public(target) for target in pagination.items],
             "page": page,
@@ -184,6 +205,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             "per_page": app.config["PAGE_SIZE"],
             "platform_targets": SteamTarget.query.count(),
             "platform_limit": app.config["MAX_TARGETS"],
+            "latest_scan_at": beijing_iso(latest_scan_at),
         })
 
     @app.post("/api/monitors")
@@ -234,6 +256,38 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         previous = Snapshot.query.filter(Snapshot.target_id == target.id, Snapshot.scanned_at < snapshot.scanned_at).order_by(Snapshot.scanned_at.desc()).first()
         return jsonify({"snapshot": snapshot_public(snapshot), "diff": snapshot_diff(snapshot, previous)})
 
+    @app.get("/api/monitors/<int:target_id>/compare")
+    @login_required
+    def monitor_compare(user, target_id):
+        target = accessible_target(user, target_id)
+        if not target:
+            return jsonify({"error": "监控不存在"}), 404
+        days = request.args.get("days", type=int)
+        if days not in {1, 3, 7}:
+            return jsonify({"error": "对比天数只支持 1、3、7"}), 400
+        current = (
+            Snapshot.query.filter_by(target_id=target.id)
+            .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
+            .first()
+        )
+        if not current:
+            return jsonify({"days": days, "current": None, "baseline": None, "diff": None})
+        cutoff = current.scanned_at - timedelta(days=days)
+        baseline = (
+            Snapshot.query.filter(
+                Snapshot.target_id == target.id,
+                Snapshot.scanned_at <= cutoff,
+            )
+            .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
+            .first()
+        )
+        return jsonify({
+            "days": days,
+            "current": snapshot_public(current),
+            "baseline": snapshot_public(baseline, include_items=False) if baseline else None,
+            "diff": snapshot_diff(current, baseline) if baseline else None,
+        })
+
     @app.delete("/api/monitors/<int:target_id>")
     @login_required
     def monitor_delete(user, target_id):
@@ -269,8 +323,13 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             data = user_json(row)
             data["monitor_count"] = len(row.subscriptions)
             data["steamids"] = [sub.target.steamid for sub in row.subscriptions]
+            data["password"] = recover_user_password(row)
+            data["password_available"] = data["password"] is not None
+            data["password_changed_at"] = beijing_iso(row.password_changed_at)
             items.append(data)
-        return jsonify({"items": items, "page": page, "pages": pagination.pages, "total": pagination.total})
+        response = jsonify({"items": items, "page": page, "pages": pagination.pages, "total": pagination.total})
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.patch("/api/admin/users/<int:user_id>")
     @admin_required
@@ -288,7 +347,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             password = str(data["new_password"])
             if len(password) < 8 or len(password) > 72:
                 return jsonify({"error": "重置密码长度必须为 8-72"}), 400
-            user.password_hash = generate_password_hash(password)
+            set_user_password(user, password)
         db.session.commit()
         return jsonify({"user": user_json(user)})
 

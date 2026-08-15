@@ -75,10 +75,26 @@ def snapshot_public(snapshot: Snapshot, *, include_items: bool = True) -> dict:
     }
     if include_items:
         rows = Counter()
+        newest_discovery: dict[str, float] = {}
         for item in snapshot.items:
             rows[item.name] += item.amount
-        data["items"] = [{"name": name, "count": count} for name, count in sorted(rows.items())]
+            seen = item.first_seen_at or snapshot.scanned_at
+            seen_key = _datetime_sort_key(seen)
+            current = newest_discovery.get(item.name)
+            if current is None or seen_key > current:
+                newest_discovery[item.name] = seen_key
+        ordered_names = sorted(
+            rows,
+            key=lambda name: (-newest_discovery[name], name.casefold()),
+        )
+        data["items"] = [{"name": name, "count": rows[name]} for name in ordered_names]
     return data
+
+
+def _datetime_sort_key(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp()
 
 
 def target_public(target: SteamTarget, *, include_latest: bool = True) -> dict:
@@ -162,7 +178,13 @@ def delete_monitor(user: User, target: SteamTarget) -> bool:
 
 
 def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
-    public = public_payload(unified, scanned_at=beijing_iso(utcnow()))
+    scanned_at = utcnow()
+    previous = latest_snapshot(target.id)
+    previous_seen = {
+        item.asset_key: (item.first_seen_at or previous.scanned_at)
+        for item in previous.items
+    } if previous else {}
+    public = public_payload(unified, scanned_at=beijing_iso(scanned_at))
     blob = gzip.compress(json.dumps(public, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     snapshot = Snapshot(
         target_id=target.id,
@@ -172,6 +194,7 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
         elapsed_ms=unified["elapsed_ms"],
         errors_json=json.dumps(unified.get("errors") or [], ensure_ascii=False),
         payload_gzip=blob,
+        scanned_at=scanned_at,
     )
     db.session.add(snapshot)
     db.session.flush()
@@ -182,6 +205,7 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
             name=asset["name"],
             amount=int(asset.get("amount", 1)),
             evidence_json=evidence_json(asset),
+            first_seen_at=previous_seen.get(asset["asset_key"], scanned_at),
         ))
     target.last_success_at = snapshot.scanned_at
     target.last_scan_at = snapshot.scanned_at
@@ -193,8 +217,12 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
 def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
     current_rows = {row.asset_key: row for row in current.items}
     previous_rows = {row.asset_key: row for row in previous.items} if previous else {}
-    current_counts = Counter(row.name for row in current_rows.values())
-    previous_counts = Counter(row.name for row in previous_rows.values())
+    current_counts = Counter()
+    previous_counts = Counter()
+    for row in current_rows.values():
+        current_counts[row.name] += row.amount
+    for row in previous_rows.values():
+        previous_counts[row.name] += row.amount
     names = sorted(set(current_counts) | set(previous_counts))
     added, removed, changed = [], [], []
     for name in names:

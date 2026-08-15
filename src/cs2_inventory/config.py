@@ -12,6 +12,7 @@ class Config:
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SECRET_KEY = os.getenv("CS2_SECRET_KEY", "development-only-change-me")
+    PASSWORD_VAULT_KEY = os.getenv("CS2_PASSWORD_VAULT_KEY", "").strip()
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = os.getenv("CS2_COOKIE_SECURE", "0") == "1"
@@ -19,7 +20,9 @@ class Config:
     PERMANENT_SESSION_LIFETIME = 86400
     MAX_TARGETS = int(os.getenv("CS2_MAX_TARGETS", "35"))
     PAGE_SIZE = 20
-    SNAPSHOT_RETENTION_DAYS = 7
+    # Keep one extra day so the newest snapshot can always be compared with
+    # the seven-day baseline.
+    SNAPSHOT_RETENTION_DAYS = 8
     INVENTORY_MONTHLY_BUDGET = int(os.getenv("CS2_MONTHLY_BUDGET", "9000"))
     INVENTORY_DAILY_BUDGET = int(os.getenv("CS2_DAILY_BUDGET", "300"))
     INVENTORY_RESERVE = int(os.getenv("CS2_INVENTORY_RESERVE", "1000"))

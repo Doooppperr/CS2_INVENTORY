@@ -28,6 +28,8 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    password_ciphertext = db.Column(db.Text)
+    password_changed_at = db.Column(db.DateTime(timezone=True))
     role = db.Column(db.String(16), nullable=False, default="user")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
@@ -84,6 +86,7 @@ class SnapshotItem(db.Model):
     name = db.Column(db.String(512), nullable=False, index=True)
     amount = db.Column(db.Integer, nullable=False, default=1)
     evidence_json = db.Column(db.Text, nullable=False, default="{}")
+    first_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     snapshot = db.relationship("Snapshot", back_populates="items")
     __table_args__ = (UniqueConstraint("snapshot_id", "asset_key", name="uq_snapshot_asset"),)
 
