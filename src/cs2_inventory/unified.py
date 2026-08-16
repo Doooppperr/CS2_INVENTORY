@@ -22,23 +22,52 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
         for row in result.get(group_name) or []:
             name = str(row.get("name") or "Unknown item")
             count = max(1, int(row.get("count", 1) or 1))
+            metadata = [value for value in (row.get("assets") or []) if isinstance(value, Mapping)]
             assetids = [str(value) for value in (row.get("assetids") or []) if value]
             sources = [str(value) for value in (row.get("sources") or [])]
+            described_ids: set[str] = set()
+            for entry in metadata:
+                assetid = str(entry.get("assetid") or "")
+                if not assetid:
+                    continue
+                described_ids.add(assetid)
+                assets[assetid] = {
+                    "asset_key": assetid,
+                    "name": str(entry.get("name") or name),
+                    "raw_name": str(entry.get("raw_name") or entry.get("name") or name),
+                    "classid": str(entry.get("classid") or ""),
+                    "instanceid": str(entry.get("instanceid") or "0"),
+                    "name_localized": bool(entry.get("name_localized", False)),
+                    "amount": max(1, int(entry.get("amount", 1) or 1)),
+                    "sources": sources,
+                    "is_trade_protected": is_trade_protected,
+                }
             for assetid in assetids:
+                if assetid in described_ids:
+                    continue
                 assets[assetid] = {
                     "asset_key": assetid,
                     "name": name,
+                    "raw_name": name,
+                    "classid": "",
+                    "instanceid": "0",
+                    "name_localized": False,
                     "amount": 1,
                     "sources": sources,
                     "is_trade_protected": is_trade_protected,
                 }
-            missing = max(0, count - len(assetids))
+            recorded = sum(int(value["amount"]) for key, value in assets.items() if key in described_ids or key in assetids)
+            missing = max(0, count - recorded)
             for _ in range(missing):
                 synthetic_index += 1
                 key = f"synthetic:{name}:{synthetic_index}"
                 assets[key] = {
                     "asset_key": key,
                     "name": name,
+                    "raw_name": name,
+                    "classid": "",
+                    "instanceid": "0",
+                    "name_localized": False,
                     "amount": 1,
                     "sources": sources,
                     "is_trade_protected": is_trade_protected,

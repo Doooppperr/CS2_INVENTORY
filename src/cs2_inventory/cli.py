@@ -4,6 +4,7 @@ import argparse
 
 from .app import create_app
 from .database import db
+from .localization import repair_retained_snapshots
 from .models import ScanBatch, ScanJob, SteamTarget, utcnow
 from .services import prune_expired, state_set
 from .worker import refresh_official_usage, worker_loop
@@ -33,7 +34,11 @@ def enqueue_daily() -> dict:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["init-db", "enqueue-daily", "prune", "worker-once"])
+    parser.add_argument(
+        "command",
+        choices=["init-db", "enqueue-daily", "prune", "worker-once", "localization-report", "repair-localized-names"],
+    )
+    parser.add_argument("--apply", action="store_true", help="commit trusted localization repairs")
     args = parser.parse_args(argv)
     if args.command == "worker-once":
         worker_loop(once=True)
@@ -47,6 +52,13 @@ def main(argv=None) -> int:
             print(enqueue_daily())
         elif args.command == "prune":
             print(prune_expired())
+        elif args.command in {"localization-report", "repair-localized-names"}:
+            result = repair_retained_snapshots(
+                dry_run=not args.apply,
+                language=app.config["ITEM_LANGUAGE"],
+                cache_path=str(app.config["OBSERVATION_CACHE"]),
+            )
+            print(result)
     return 0
 
 

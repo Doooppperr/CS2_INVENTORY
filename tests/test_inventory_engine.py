@@ -15,6 +15,7 @@ from cs2_inventory.inventory_engine import (
     apply_observation_cache,
     apply_hidden_budget,
     asset_records_from_parsed_payload,
+    asset_records_from_public_payload,
     asset_records_from_raw_payload,
     build_cookie_header,
     classify_protected_assets,
@@ -44,6 +45,22 @@ from cs2_inventory.inventory_engine import (
 
 
 class CS2InventoryQueryTests(unittest.TestCase):
+    def test_public_schinese_record_retains_hash_name_and_localization_metadata(self):
+        payload = {
+            "assets": [{"appid": "730", "contextid": "2", "assetid": "a1", "classid": "c1", "instanceid": "0"}],
+            "descriptions": [{
+                "appid": "730", "contextid": "2", "classid": "c1", "instanceid": "0",
+                "market_hash_name": "AK-47 | Abstract (Factory New)",
+                "market_name": "AK-47 | 抽象派（崭新出厂）",
+            }],
+        }
+        record = asset_records_from_public_payload(payload, source="steam_public_contextid2")[0]
+        localized = localize_asset_records([record], language="schinese")[0]
+        group = group_records_by_name([localized])[0]
+        self.assertEqual(record.raw_name, "AK-47 | Abstract (Factory New)")
+        self.assertEqual(localized.name, "AK-47 | 抽象派（崭新出厂）")
+        self.assertTrue(group["assets"][0]["name_localized"])
+
     def test_hidden_hash_name_is_localized_from_official_itemclass_hover(self):
         import tempfile
         from pathlib import Path

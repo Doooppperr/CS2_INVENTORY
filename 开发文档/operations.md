@@ -18,3 +18,9 @@ sudo -u cs2inventory env PYTHONPATH=/opt/cs2-inventory/current/src CS2_STATE_DIR
 ```
 
 发布使用 `deploy/release.sh`，失败时自动恢复旧软链接和部署前数据库；人工代码回滚使用 `deploy/rollback.sh <旧版本目录>`。
+# 名称补译运维（2026-08-16）
+
+- Worker 优先处理完整扫描任务，空闲时领取到期的 `localization_jobs`，补译不调用完整库存接口且不计入扫描额度。
+- 发布后第 15 分钟首次补译；失败后约第 1 小时和第 6 小时重试，第三次仍失败则记录为 `failed`。
+- `localization-report` 永远只读；`repair-localized-names --apply` 在一次数据库事务中更新名称、重算 `item_types` 并重建压缩载荷。
+- 历史修复只采用官方缓存或同一 assetid 的可信简中历史，不猜译未知名称。

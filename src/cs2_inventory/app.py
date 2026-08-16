@@ -20,6 +20,8 @@ from .auth import (
 from .config import Config
 from .database import db
 from .models import (
+    ItemNameLocalization,
+    LocalizationJob,
     ScanJob,
     Snapshot,
     SteamTarget,
@@ -409,6 +411,14 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             "pending_jobs": running,
             "quota": quota_status(),
             "official_quota": official,
+            "localization": {
+                "mappings": ItemNameLocalization.query.count(),
+                "pending_jobs": LocalizationJob.query.filter(LocalizationJob.status.in_(["queued", "running"])).count(),
+                "pending_items": db.session.query(func.coalesce(func.sum(LocalizationJob.unresolved_count), 0)).filter(
+                    LocalizationJob.status.in_(["queued", "running"])
+                ).scalar(),
+                "failed_jobs": LocalizationJob.query.filter_by(status="failed").count(),
+            },
         })
 
     return app

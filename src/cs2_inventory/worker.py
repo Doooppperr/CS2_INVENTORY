@@ -15,7 +15,16 @@ from . import inventory_engine
 from .app import create_app
 from .database import db
 from .inventory_engine import run_max_coverage_query
-from .models import QuotaUsage, ScanBatch, ScanJob, SteamTarget, beijing_iso, utcnow
+from .localization import process_localization_job
+from .models import (
+    LocalizationJob,
+    QuotaUsage,
+    ScanBatch,
+    ScanJob,
+    SteamTarget,
+    beijing_iso,
+    utcnow,
+)
 from .services import prune_expired, quota_allows_scan, state_set, store_snapshot
 from .unified import public_payload, unify_inventory
 
@@ -63,8 +72,11 @@ def recover_interrupted_jobs() -> int:
             target = db.session.get(SteamTarget, job.target_id)
             if target:
                 target.scan_status = "queued"
+    localization_jobs = LocalizationJob.query.filter_by(status="running").all()
+    for job in localization_jobs:
+        job.status = "queued"
     db.session.commit()
-    return len(jobs)
+    return len(jobs) + len(localization_jobs)
 
 
 def fetch_persona_name(steamid: str) -> str | None:
@@ -134,6 +146,33 @@ def claim_next_job() -> int | None:
                 target.scan_status = "scanning"
         db.session.commit()
         return job.id
+
+
+def claim_next_localization_job() -> int | None:
+    with _claim_lock:
+        job = (
+            LocalizationJob.query.filter(
+                LocalizationJob.status == "queued",
+                LocalizationJob.next_attempt_at <= utcnow(),
+            )
+            .order_by(LocalizationJob.next_attempt_at.asc(), LocalizationJob.id.asc())
+            .first()
+        )
+        if not job:
+            return None
+        job.status = "running"
+        db.session.commit()
+        return job.id
+
+
+def claim_next_work() -> tuple[str, int] | None:
+    scan_id = claim_next_job()
+    if scan_id is not None:
+        return ("scan", scan_id)
+    localization_id = claim_next_localization_job()
+    if localization_id is not None:
+        return ("localization", localization_id)
+    return None
 
 
 def finish_batch(batch_id: int | None) -> None:
@@ -236,25 +275,32 @@ def worker_loop(*, once: bool = False) -> None:
         recover_interrupted_jobs()
         if once:
             while True:
-                job_id = claim_next_job()
-                if job_id is None:
+                work = claim_next_work()
+                if work is None:
                     return
-                process_job(job_id)
+                _process_work(*work)
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = set()
             while True:
                 futures = {future for future in futures if not future.done()}
                 while len(futures) < 2:
-                    job_id = claim_next_job()
-                    if job_id is None:
+                    work = claim_next_work()
+                    if work is None:
                         break
-                    futures.add(executor.submit(_process_with_context, app, job_id))
+                    futures.add(executor.submit(_process_with_context, app, *work))
                 time.sleep(1 if futures else 3)
 
 
-def _process_with_context(app, job_id: int) -> None:
-    with app.app_context():
+def _process_work(kind: str, job_id: int) -> None:
+    if kind == "scan":
         process_job(job_id)
+    else:
+        process_localization_job(job_id)
+
+
+def _process_with_context(app, kind: str, job_id: int) -> None:
+    with app.app_context():
+        _process_work(kind, job_id)
 
 
 if __name__ == "__main__":

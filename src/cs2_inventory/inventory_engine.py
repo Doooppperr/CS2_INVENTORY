@@ -116,6 +116,7 @@ class AssetRecord:
     protected_until: int = 0
     sources: Tuple[str, ...] = ()
     protection_state: str = ""
+    raw_name: str = ""
 
 
 def _string(value: Any, default: str = "") -> str:
@@ -558,6 +559,7 @@ def asset_records_from_raw_payload(payload: Any, *, source: str) -> List[AssetRe
                 classid=classid,
                 instanceid=instanceid,
                 name=name,
+                raw_name=_string((description or {}).get("market_hash_name") or name),
                 amount=_amount(asset.get("amount")),
                 contextid=CONTEXTID_CS2,
                 appid=str(APPID_CS2),
@@ -585,6 +587,7 @@ def asset_records_from_parsed_payload(payload: Any, *, source: str) -> List[Asse
                 classid=classid,
                 instanceid=instanceid,
                 name=_steamwebapi_item_name(item),
+                raw_name=_string(item.get("market_hash_name") or item.get("markethashname") or _steamwebapi_item_name(item)),
                 amount=_steamwebapi_amount(item),
                 contextid=CONTEXTID_CS2,
                 appid=str(APPID_CS2),
@@ -620,6 +623,7 @@ def asset_records_from_public_payload(payload: Mapping[str, Any], *, source: str
                 classid=classid,
                 instanceid=instanceid,
                 name=_name_from_description(description),
+                raw_name=_string((description or {}).get("market_hash_name") or _name_from_description(description)),
                 amount=_amount(asset.get("amount")),
                 contextid=CONTEXTID_CS2,
                 appid=str(APPID_CS2),
@@ -657,6 +661,8 @@ def merge_asset_records(record_lists: Iterable[Iterable[AssetRecord]]) -> List[A
                 tradelocked=previous.tradelocked or record.tradelocked,
                 protected_until=max(previous.protected_until, record.protected_until),
                 sources=merged_sources,
+                protection_state=record.protection_state or previous.protection_state,
+                raw_name=record.raw_name or previous.raw_name,
             )
     return sorted(by_assetid.values(), key=lambda record: (record.name, record.assetid))
 
@@ -819,6 +825,7 @@ def _merge_two_asset_records(first: AssetRecord, second: AssetRecord) -> AssetRe
         protected_until=max(first.protected_until, second.protected_until),
         sources=tuple(sorted(set(first.sources) | set(second.sources))),
         protection_state=first.protection_state or second.protection_state,
+        raw_name=first.raw_name or second.raw_name,
     )
 
 
@@ -1125,6 +1132,30 @@ def _localized_market_name_from_hover(html: str) -> str:
     return _string(payload.get("market_name") or payload.get("name"))
 
 
+def fetch_localized_market_name(
+    classid: str,
+    instanceid: str = "0",
+    *,
+    language: str = DEFAULT_LANGUAGE,
+    timeout: float = 5.0,
+) -> str:
+    """Fetch one official localized market name without performing an inventory scan."""
+    if not classid:
+        return ""
+    url = STEAM_ITEMCLASS_HOVER_URL.format(
+        appid=APPID_CS2,
+        classid=urllib.parse.quote(classid, safe=""),
+        instanceid=urllib.parse.quote(instanceid or "0", safe=""),
+    )
+    html, _final_url = http_get_text(
+        url,
+        {"content_only": "1", "l": language},
+        timeout=timeout,
+        retries=0,
+    )
+    return _localized_market_name_from_hover(html)
+
+
 def localize_asset_records(
     records: Sequence[AssetRecord],
     *,
@@ -1153,19 +1184,13 @@ def localize_asset_records(
         original_name, record = entry
         if not record.classid:
             return original_name, ""
-        url = STEAM_ITEMCLASS_HOVER_URL.format(
-            appid=record.appid or APPID_CS2,
-            classid=urllib.parse.quote(record.classid, safe=""),
-            instanceid=urllib.parse.quote(record.instanceid or "0", safe=""),
-        )
         try:
-            html, _final_url = http_get_text(
-                url,
-                {"content_only": "1", "l": language},
+            localized = fetch_localized_market_name(
+                record.classid,
+                record.instanceid,
+                language=language,
                 timeout=timeout,
-                retries=0,
             )
-            localized = _localized_market_name_from_hover(html)
         except SteamQueryError:
             localized = ""
         return original_name, localized
@@ -1189,10 +1214,19 @@ def localize_asset_records(
             _write_observation_cache(cache_path, cache)
             name_cache = merged
 
-    return [
-        dataclasses.replace(record, name=name_cache.get(record.name, record.name))
-        for record in records
-    ]
+    localized_records: List[AssetRecord] = []
+    for record in records:
+        raw_name = record.raw_name or record.name
+        localized = name_cache.get(record.name, record.name)
+        sources = record.sources
+        if localized != record.name:
+            sources = tuple(sorted(set(sources) | {"localized_official_schinese"}))
+        elif record.name in name_cache or re.search(r"[\u4e00-\u9fff]", localized):
+            sources = tuple(sorted(set(sources) | {"localized_official_schinese"}))
+        localized_records.append(
+            dataclasses.replace(record, name=localized, raw_name=raw_name, sources=sources)
+        )
+    return localized_records
 
 
 def _apply_observation_cache_unlocked(
@@ -1910,6 +1944,7 @@ def group_records_by_name(records: Iterable[AssetRecord]) -> List[Dict[str, Any]
                 "name": record.name,
                 "count": 0,
                 "assetids": [],
+                "assets": [],
                 "sources": [],
                 "tradeprotected": False,
                 "tradelocked": False,
@@ -1919,6 +1954,18 @@ def group_records_by_name(records: Iterable[AssetRecord]) -> List[Dict[str, Any]
         group["count"] += record.amount
         if record.assetid:
             group["assetids"].append(record.assetid)
+            group["assets"].append({
+                "assetid": record.assetid,
+                "classid": record.classid,
+                "instanceid": record.instanceid,
+                "name": record.name,
+                "raw_name": record.raw_name or record.name,
+                "amount": record.amount,
+                "name_localized": (
+                    "localized_official_schinese" in record.sources
+                    or bool(re.search(r"[\u4e00-\u9fff]", record.name))
+                ),
+            })
         for source in record.sources:
             if source not in group["sources"]:
                 group["sources"].append(source)
@@ -2216,6 +2263,12 @@ def run_max_coverage_query(
     # Merge it last so its localized names replace third-party hash names for
     # matching public assets without changing asset identity or totals.
     public_records = merge_asset_records([normal_records, official_public_records])
+    public_records = localize_asset_records(
+        public_records,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 5.0),
+    )
     trading_merged = merge_asset_records([trading_records])
     protected_candidates, public_missing_candidates, excluded = classify_hidden_assets(
         trading_merged, public_records, parsed_records, now=now

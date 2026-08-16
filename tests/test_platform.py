@@ -12,7 +12,10 @@ from werkzeug.security import generate_password_hash
 from cs2_inventory.app import create_app
 from cs2_inventory.cli import enqueue_daily
 from cs2_inventory.database import db
+from cs2_inventory.localization import repair_retained_snapshots
 from cs2_inventory.models import (
+    ItemNameLocalization,
+    LocalizationJob,
     ScanBatch,
     ScanJob,
     Snapshot,
@@ -196,6 +199,89 @@ class PlatformTests(unittest.TestCase):
             result = prune_expired()
             self.assertEqual(result["snapshots"], 1)
             self.assertIsNone(db.session.get(Snapshot, first.id))
+
+    def test_same_asset_language_change_is_canonicalized_and_not_reported(self):
+        with self.app.app_context():
+            target = SteamTarget.query.first()
+            first = store_snapshot(target, {
+                "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [],
+                "_assets": [{
+                    "asset_key": "stable-asset", "name": "AK-47 | 抽象派（崭新出厂）",
+                    "raw_name": "AK-47 | Abstract (Factory New)", "name_localized": True,
+                    "classid": "100", "instanceid": "0", "amount": 1, "sources": [],
+                }],
+            })
+            db.session.commit()
+            second = store_snapshot(target, {
+                "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [],
+                "_assets": [{
+                    "asset_key": "stable-asset", "name": "AK-47 | Abstract (Factory New)",
+                    "raw_name": "AK-47 | Abstract (Factory New)", "name_localized": False,
+                    "classid": "100", "instanceid": "0", "amount": 1, "sources": [],
+                }],
+            })
+            db.session.commit()
+            self.assertEqual(second.items[0].name, "AK-47 | 抽象派（崭新出厂）")
+            self.assertTrue(second.items[0].name_localized)
+            self.assertEqual(snapshot_diff(second, first)["added"], [])
+            self.assertEqual(snapshot_diff(second, first)["removed"], [])
+            self.assertEqual(snapshot_diff(second, first)["changed"], [])
+
+    def test_repair_retained_snapshots_dry_run_and_apply_preserve_inventory_identity(self):
+        with self.app.app_context():
+            target = SteamTarget.query.first()
+            localized = store_snapshot(target, {
+                "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [],
+                "_assets": [{
+                    "asset_key": "repair-asset", "name": "格洛克 18 型 | 渐变之色（崭新出厂）",
+                    "raw_name": "Glock-18 | Fade (Factory New)", "name_localized": True,
+                    "classid": "200", "instanceid": "0", "amount": 1, "sources": [],
+                }],
+            })
+            db.session.commit()
+            broken = store_snapshot(target, {
+                "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [],
+                "_assets": [{
+                    "asset_key": "repair-asset-2", "name": "Glock-18 | Fade (Factory New)",
+                    "raw_name": "Glock-18 | Fade (Factory New)", "name_localized": False,
+                    "classid": "200", "instanceid": "0", "amount": 1, "sources": [],
+                }],
+            })
+            db.session.commit()
+            broken.items[0].name = "Glock-18 | Fade (Factory New)"
+            broken.items[0].name_localized = False
+            ItemNameLocalization.query.delete()
+            db.session.commit()
+            broken_id = broken.id
+            asset_key = broken.items[0].asset_key
+            first_seen = broken.items[0].first_seen_at
+            dry = repair_retained_snapshots(dry_run=True, cache_path=self.app.config["OBSERVATION_CACHE"])
+            self.assertGreaterEqual(dry["changed_items"], 1)
+            self.assertEqual(db.session.get(Snapshot, broken_id).items[0].name, "Glock-18 | Fade (Factory New)")
+            applied = repair_retained_snapshots(dry_run=False, cache_path=self.app.config["OBSERVATION_CACHE"])
+            fixed = db.session.get(Snapshot, broken_id).items[0]
+            self.assertGreaterEqual(applied["changed_items"], 1)
+            self.assertEqual(fixed.name, localized.items[0].name)
+            self.assertEqual(fixed.asset_key, asset_key)
+            self.assertEqual(fixed.first_seen_at, first_seen)
+
+    def test_unresolved_snapshot_queues_lightweight_retry_at_fifteen_minutes(self):
+        with self.app.app_context():
+            target = SteamTarget.query.first()
+            before = utcnow()
+            snapshot = store_snapshot(target, {
+                "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [],
+                "_assets": [{
+                    "asset_key": "unresolved", "name": "Brand New Item", "raw_name": "Brand New Item",
+                    "name_localized": False, "classid": "300", "instanceid": "0", "amount": 1, "sources": [],
+                }],
+            })
+            db.session.commit()
+            job = LocalizationJob.query.filter_by(snapshot_id=snapshot.id).one()
+            due = job.next_attempt_at.replace(tzinfo=timezone.utc) if job.next_attempt_at.tzinfo is None else job.next_attempt_at
+            self.assertGreaterEqual(due, before + timedelta(minutes=14, seconds=55))
+            self.assertEqual(job.unresolved_count, 1)
+            self.assertEqual(ItemNameLocalization.query.filter_by(source_name="Brand New Item").count(), 0)
 
     def test_user_changed_password_is_visible_to_admin_but_not_stored_plaintext(self):
         token = self.login()

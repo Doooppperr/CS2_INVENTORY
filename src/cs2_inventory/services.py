@@ -11,6 +11,12 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from .database import db
+from .localization import (
+    canonicalize_unified,
+    has_han,
+    localization_map,
+    queue_localization_job,
+)
 from .models import (
     QuotaUsage,
     ScanJob,
@@ -196,6 +202,8 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
         item.asset_key: (item.first_seen_at or previous.scanned_at)
         for item in previous.items
     } if previous else {}
+    language = current_app.config.get("ITEM_LANGUAGE", "schinese")
+    unresolved_count = canonicalize_unified(target, unified, language=language)
     public = public_payload(unified, scanned_at=beijing_iso(scanned_at))
     blob = gzip.compress(json.dumps(public, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     snapshot = Snapshot(
@@ -215,11 +223,16 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
             snapshot_id=snapshot.id,
             asset_key=asset["asset_key"],
             name=asset["name"],
+            raw_name=asset.get("raw_name") or asset["name"],
+            classid=str(asset.get("classid") or ""),
+            instanceid=str(asset.get("instanceid") or "0"),
+            name_localized=bool(asset.get("name_localized", False)),
             amount=int(asset.get("amount", 1)),
             evidence_json=evidence_json(asset),
             first_seen_at=previous_seen.get(asset["asset_key"], scanned_at),
             is_trade_protected=bool(asset.get("is_trade_protected", False)),
         ))
+    queue_localization_job(snapshot, target, unresolved_count, language=language)
     target.last_success_at = snapshot.scanned_at
     target.last_scan_at = snapshot.scanned_at
     target.scan_status = "ready"
@@ -230,12 +243,28 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
 def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
     current_rows = {row.asset_key: row for row in current.items}
     previous_rows = {row.asset_key: row for row in previous.items} if previous else {}
+    aliases = localization_map(current_app.config.get("ITEM_LANGUAGE", "schinese"))
+    for asset_key in set(current_rows) & set(previous_rows):
+        current_row = current_rows[asset_key]
+        previous_row = previous_rows[asset_key]
+        if current_row.name == previous_row.name:
+            continue
+        if current_row.name_localized or has_han(current_row.name):
+            aliases[previous_row.raw_name or previous_row.name] = current_row.name
+            aliases[previous_row.name] = current_row.name
+        elif previous_row.name_localized or has_han(previous_row.name):
+            aliases[current_row.raw_name or current_row.name] = previous_row.name
+            aliases[current_row.name] = previous_row.name
+
+    def stable_name(row: SnapshotItem) -> str:
+        return aliases.get(row.raw_name or row.name) or aliases.get(row.name) or row.name
+
     current_counts = Counter()
     previous_counts = Counter()
     for row in current_rows.values():
-        current_counts[row.name] += row.amount
+        current_counts[stable_name(row)] += row.amount
     for row in previous_rows.values():
-        previous_counts[row.name] += row.amount
+        previous_counts[stable_name(row)] += row.amount
     names = sorted(set(current_counts) | set(previous_counts))
     added, removed, changed = [], [], []
     for name in names:

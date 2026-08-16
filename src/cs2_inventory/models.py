@@ -84,12 +84,45 @@ class SnapshotItem(db.Model):
     snapshot_id = db.Column(db.Integer, db.ForeignKey("snapshots.id", ondelete="CASCADE"), nullable=False, index=True)
     asset_key = db.Column(db.String(128), nullable=False)
     name = db.Column(db.String(512), nullable=False, index=True)
+    raw_name = db.Column(db.String(512), nullable=False, default="")
+    classid = db.Column(db.String(64), nullable=False, default="")
+    instanceid = db.Column(db.String(64), nullable=False, default="0")
+    name_localized = db.Column(db.Boolean, nullable=False, default=False)
     amount = db.Column(db.Integer, nullable=False, default=1)
     evidence_json = db.Column(db.Text, nullable=False, default="{}")
     first_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     is_trade_protected = db.Column(db.Boolean, nullable=False, default=False)
     snapshot = db.relationship("Snapshot", back_populates="items")
     __table_args__ = (UniqueConstraint("snapshot_id", "asset_key", name="uq_snapshot_asset"),)
+
+
+class ItemNameLocalization(db.Model):
+    __tablename__ = "item_name_localizations"
+    id = db.Column(db.Integer, primary_key=True)
+    language = db.Column(db.String(16), nullable=False, default="schinese")
+    source_name = db.Column(db.String(512), nullable=False)
+    localized_name = db.Column(db.String(512), nullable=False)
+    classid = db.Column(db.String(64), nullable=False, default="")
+    instanceid = db.Column(db.String(64), nullable=False, default="0")
+    source = db.Column(db.String(32), nullable=False, default="official")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    __table_args__ = (UniqueConstraint("language", "source_name", name="uq_item_name_language_source"),)
+
+
+class LocalizationJob(db.Model):
+    __tablename__ = "localization_jobs"
+    id = db.Column(db.Integer, primary_key=True)
+    snapshot_id = db.Column(db.Integer, db.ForeignKey("snapshots.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_id = db.Column(db.Integer, db.ForeignKey("steam_targets.id", ondelete="CASCADE"), nullable=False, index=True)
+    language = db.Column(db.String(16), nullable=False, default="schinese")
+    status = db.Column(db.String(24), nullable=False, default="queued", index=True)
+    attempt = db.Column(db.Integer, nullable=False, default=0)
+    next_attempt_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    unresolved_count = db.Column(db.Integer, nullable=False, default=0)
+    error = db.Column(db.Text)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
 class ScanBatch(db.Model):

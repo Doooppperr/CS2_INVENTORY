@@ -17,3 +17,8 @@
 
 快照公开结构仅包含 `items`、`total_items`、`item_types`、`coverage`、`scanned_at`、`elapsed_ms` 和 `errors`；每个 `items` 元素包含 `name`、`count`、`is_trade_protected`。同名物品会按明确交易保护状态拆分为最多两行，保护行始终置顶。
 物品首次发现时间仅用于服务端排序，不通过公开快照结构返回。管理员用户列表额外返回加密副本解密后的当前密码及改密时间，并禁止响应缓存。
+# 名称稳定性约定（2026-08-16）
+
+库存接口继续只公开 `name`、`count`、`is_trade_protected`，不公开内部的 `raw_name`、`classid`、`instanceid` 或 `name_localized`。`snapshot_diff` 先按 `asset_key` 对齐，再通过官方名称映射聚合；同一资产仅发生中英文切换时，`added`、`removed`、`changed` 均为空。
+
+管理员状态接口的 `localization` 对象包含 `mappings`、`pending_jobs`、`pending_items` 和 `failed_jobs`，用于观测名称映射和补译队列。
