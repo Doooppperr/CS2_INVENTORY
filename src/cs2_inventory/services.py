@@ -195,6 +195,20 @@ def delete_monitor(user: User, target: SteamTarget) -> bool:
     return deleted_target
 
 
+def delete_user_account(user: User) -> int:
+    """Permanently delete a user and targets that only they subscribed to."""
+    targets = list({subscription.target for subscription in user.subscriptions})
+    db.session.delete(user)
+    db.session.flush()
+    deleted_targets = 0
+    for target in targets:
+        if Subscription.query.filter_by(target_id=target.id).count() == 0:
+            db.session.delete(target)
+            deleted_targets += 1
+    db.session.commit()
+    return deleted_targets
+
+
 def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
     scanned_at = utcnow()
     previous = latest_snapshot(target.id)

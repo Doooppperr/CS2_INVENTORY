@@ -8,8 +8,9 @@
 - `GET api/monitors/<id>/snapshots/<snapshot_id>`：快照与新增、移除、数量变化。
 - `GET api/monitors/<id>/compare?days=1|3|7`：最新快照与指定天数前基准快照的差异。
 - `GET api/jobs/<id>`：后台任务状态。
-- `GET api/admin/users|targets|status`：管理员整合视图。
-- `PATCH api/admin/users/<id>`：停用/启用账号或重置密码。
+- `GET api/admin/users|targets|status`：管理员用户、目标与概览数据；分页越界时返回最后一个有效页。
+- `PATCH api/admin/users/<id>`：仅重置密码，不再接受账号停用状态。
+- `DELETE api/admin/users/<id>`：永久删除账号及订阅，共享目标保留，无主目标及其快照随之删除；当前管理员不能删除自身。
 - `DELETE api/admin/targets/<id>`：管理员强制删除平台目标及其快照。
 - `POST api/admin/query`：一小时有效的即时查询结果。
 - `POST api/admin/targets/<id>/scan`：手动重扫。
@@ -22,3 +23,7 @@
 库存接口继续只公开 `name`、`count`、`is_trade_protected`，不公开内部的 `raw_name`、`classid`、`instanceid` 或 `name_localized`。`snapshot_diff` 先按 `asset_key` 对齐，再通过官方名称映射聚合；同一资产仅发生中英文切换时，`added`、`removed`、`changed` 均为空。
 
 管理员状态接口的 `localization` 对象包含 `mappings`、`pending_jobs`、`pending_items` 和 `failed_jobs`，用于观测名称映射和补译队列。
+
+# 账号与分页约定（2026-08-19）
+
+账号管理不提供停用或恢复语义。删除成功返回 `ok`、`deleted_user_id` 和 `deleted_targets`。监控、管理员用户、管理员目标三个列表接口均规范化 `page`，前端通过 `view`、`section`、`page`、`user_page`、`target_page` 保存导航状态。

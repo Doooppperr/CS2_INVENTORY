@@ -26,6 +26,7 @@ from .models import (
     Snapshot,
     SteamTarget,
     Subscription,
+    SystemState,
     User,
     beijing_iso,
     utcnow,
@@ -34,6 +35,7 @@ from .password_vault import recover_user_password, set_user_password
 from .services import (
     add_monitor,
     delete_monitor,
+    delete_user_account,
     ensure_mutation_allowed,
     maintenance_active,
     queue_job,
@@ -41,8 +43,11 @@ from .services import (
     snapshot_diff,
     snapshot_public,
     state_get,
+    state_set,
     target_public,
 )
+
+BOOTSTRAP_SEED_VERSION = "1"
 
 
 def bootstrap_data() -> None:
@@ -53,6 +58,14 @@ def bootstrap_data() -> None:
         WHEN (SELECT COUNT(*) FROM steam_targets) >= 35
         BEGIN SELECT RAISE(ABORT, 'platform target limit reached'); END
     """))
+    if db.session.get(SystemState, "bootstrap_seed_version"):
+        db.session.commit()
+        return
+    if User.query.first() or SteamTarget.query.first():
+        state_set("bootstrap_seed_version", BOOTSTRAP_SEED_VERSION)
+        db.session.commit()
+        return
+
     seeds = (
         (
             "cs2inventory_admin",
@@ -66,14 +79,18 @@ def bootstrap_data() -> None:
         ),
     )
     for username, password_hash, role in seeds:
-        user = User.query.filter_by(username=username).first()
-        if not user:
-            db.session.add(User(username=username, password_hash=password_hash, role=role))
+        db.session.add(User(username=username, password_hash=password_hash, role=role))
+    state_set("bootstrap_seed_version", BOOTSTRAP_SEED_VERSION)
     db.session.commit()
-    initial_user = User.query.filter_by(username="cs2inventory_user").one()
-    for steamid in ("76561198441561382", "76561199771254049", "76561198413577373"):
-        if not SteamTarget.query.filter_by(steamid=steamid).first():
-            add_monitor(initial_user, steamid)
+
+
+def canonical_pagination(query, *, per_page: int):
+    requested_page = max(1, request.args.get("page", 1, type=int))
+    pagination = query.paginate(page=requested_page, per_page=per_page, error_out=False)
+    page = min(requested_page, max(1, pagination.pages))
+    if page != requested_page:
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    return page, pagination
 
 
 def create_app(config: type[Config] | dict | None = None) -> Flask:
@@ -190,9 +207,8 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/monitors")
     @login_required
     def monitors(user):
-        page = max(1, request.args.get("page", 1, type=int))
         query = SteamTarget.query.join(Subscription).filter(Subscription.user_id == user.id).order_by(SteamTarget.created_at.desc())
-        pagination = query.paginate(page=page, per_page=app.config["PAGE_SIZE"], error_out=False)
+        page, pagination = canonical_pagination(query, per_page=app.config["PAGE_SIZE"])
         latest_scan_at = (
             db.session.query(func.max(SteamTarget.last_scan_at))
             .join(Subscription, Subscription.target_id == SteamTarget.id)
@@ -318,8 +334,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/admin/users")
     @admin_required
     def admin_users(_user):
-        page = max(1, request.args.get("page", 1, type=int))
-        pagination = User.query.order_by(User.created_at.desc()).paginate(page=page, per_page=20, error_out=False)
+        page, pagination = canonical_pagination(User.query.order_by(User.created_at.desc()), per_page=20)
         items = []
         for row in pagination.items:
             data = user_json(row)
@@ -342,9 +357,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"error": "用户不存在"}), 404
         data = request.get_json(silent=True) or {}
         if "is_active" in data:
-            if user.id == admin.id and not bool(data["is_active"]):
-                return jsonify({"error": "不能停用当前管理员"}), 400
-            user.is_active = bool(data["is_active"])
+            return jsonify({"error": "账号停用已改为永久删除，请使用删除账号"}), 400
         if data.get("new_password") is not None:
             password = str(data["new_password"])
             if len(password) < 8 or len(password) > 72:
@@ -353,11 +366,22 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         db.session.commit()
         return jsonify({"user": user_json(user)})
 
+    @app.delete("/api/admin/users/<int:user_id>")
+    @admin_required
+    def admin_user_delete(admin, user_id):
+        require_csrf()
+        user = db.session.get(User, user_id)
+        if not user:
+            return jsonify({"error": "用户不存在"}), 404
+        if user.id == admin.id:
+            return jsonify({"error": "不能删除当前管理员"}), 400
+        deleted_targets = delete_user_account(user)
+        return jsonify({"ok": True, "deleted_user_id": user_id, "deleted_targets": deleted_targets})
+
     @app.get("/api/admin/targets")
     @admin_required
     def admin_targets(_user):
-        page = max(1, request.args.get("page", 1, type=int))
-        pagination = SteamTarget.query.order_by(SteamTarget.created_at.desc()).paginate(page=page, per_page=20, error_out=False)
+        page, pagination = canonical_pagination(SteamTarget.query.order_by(SteamTarget.created_at.desc()), per_page=20)
         return jsonify({"items": [target_public(row) for row in pagination.items], "page": page, "pages": pagination.pages, "total": pagination.total})
 
     @app.delete("/api/admin/targets/<int:target_id>")

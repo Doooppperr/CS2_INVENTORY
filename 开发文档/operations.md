@@ -18,6 +18,8 @@ sudo -u cs2inventory env PYTHONPATH=/opt/cs2-inventory/current/src CS2_STATE_DIR
 ```
 
 发布使用 `deploy/release.sh`，失败时自动恢复旧软链接和部署前数据库；人工代码回滚使用 `deploy/rollback.sh <旧版本目录>`。
+
+账号删除、旧停用账号清理和旧预置目标清理均不可逆。若需恢复，停止 Web 与 Worker，恢复对应 `pre-deploy-<commit>/cs2_inventory.db`，再切回旧 release 并重启服务。`bootstrap_seed_version` 存在时，任何进程启动都不会再次播种账号或监控目标。
 # 名称补译运维（2026-08-16）
 
 - Worker 优先处理完整扫描任务，空闲时领取到期的 `localization_jobs`，补译不调用完整库存接口且不计入扫描额度。

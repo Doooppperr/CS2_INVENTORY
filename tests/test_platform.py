@@ -9,7 +9,7 @@ from unittest import mock
 
 from werkzeug.security import generate_password_hash
 
-from cs2_inventory.app import create_app
+from cs2_inventory.app import bootstrap_data, create_app
 from cs2_inventory.cli import enqueue_daily
 from cs2_inventory.database import db
 from cs2_inventory.localization import repair_retained_snapshots
@@ -22,6 +22,7 @@ from cs2_inventory.models import (
     SnapshotItem,
     SteamTarget,
     Subscription,
+    SystemState,
     User,
     beijing_iso,
     utcnow,
@@ -74,6 +75,11 @@ class PlatformTests(unittest.TestCase):
                 {User.password_hash: test_hash}, synchronize_session=False
             )
             db.session.commit()
+            self.bootstrap_target_count = SteamTarget.query.count()
+            self.bootstrap_marker = db.session.get(SystemState, "bootstrap_seed_version").value
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            for steamid in ("76561198441561382", "76561199771254049", "76561198413577373"):
+                add_monitor(user, steamid)
 
     def tearDown(self):
         with self.app.app_context():
@@ -91,16 +97,63 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.get_json())
         return response.get_json()["csrf_token"]
 
-    def test_bootstrap_accounts_are_hashed_and_three_monitors_seeded(self):
+    def test_bootstrap_accounts_are_hashed_without_seeded_monitors(self):
         with self.app.app_context():
             admin = User.query.filter_by(username="cs2inventory_admin").one()
             user = User.query.filter_by(username="cs2inventory_user").one()
             self.assertEqual(admin.role, "admin")
             self.assertTrue(admin.password_hash.startswith("scrypt:"))
             self.assertTrue(user.password_hash.startswith("scrypt:"))
-            self.assertEqual({row.target.steamid for row in user.subscriptions}, {
-                "76561198441561382", "76561199771254049", "76561198413577373"
-            })
+            self.assertEqual(self.bootstrap_target_count, 0)
+            self.assertEqual(self.bootstrap_marker, "1")
+
+    def test_deleted_seed_target_and_account_are_not_recreated_on_bootstrap(self):
+        token = self.login("cs2inventory_admin")
+        with self.app.app_context():
+            target = SteamTarget.query.filter_by(steamid="76561199771254049").one()
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            target_id, user_id = target.id, user.id
+        response = self.client.delete(f"/api/admin/targets/{target_id}", headers={"X-CSRF-Token": token})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        response = self.client.delete(f"/api/admin/users/{user_id}", headers={"X-CSRF-Token": token})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        with self.app.app_context():
+            bootstrap_data()
+            self.assertIsNone(User.query.filter_by(username="cs2inventory_user").first())
+            self.assertIsNone(SteamTarget.query.filter_by(steamid="76561199771254049").first())
+
+    def test_admin_user_delete_preserves_shared_target_and_removes_exclusive_target(self):
+        with self.app.app_context():
+            victim = User(username="victim", password_hash="hash", role="user")
+            db.session.add(victim)
+            db.session.commit()
+            shared = SteamTarget.query.filter_by(steamid="76561198441561382").one()
+            db.session.add(Subscription(user_id=victim.id, target_id=shared.id))
+            db.session.commit()
+            exclusive, _job, _created = add_monitor(victim, "76561199000000123")
+            victim_id, shared_id, exclusive_id = victim.id, shared.id, exclusive.id
+        token = self.login("cs2inventory_admin")
+        response = self.client.delete(f"/api/admin/users/{victim_id}", headers={"X-CSRF-Token": token})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["deleted_targets"], 1)
+        with self.app.app_context():
+            self.assertIsNone(db.session.get(User, victim_id))
+            self.assertIsNotNone(db.session.get(SteamTarget, shared_id))
+            self.assertIsNone(db.session.get(SteamTarget, exclusive_id))
+
+    def test_admin_cannot_delete_current_account_or_soft_disable_users(self):
+        token = self.login("cs2inventory_admin")
+        with self.app.app_context():
+            admin_id = User.query.filter_by(username="cs2inventory_admin").one().id
+            user_id = User.query.filter_by(username="cs2inventory_user").one().id
+        response = self.client.delete(f"/api/admin/users/{admin_id}", headers={"X-CSRF-Token": token})
+        self.assertEqual(response.status_code, 400, response.get_json())
+        response = self.client.patch(
+            f"/api/admin/users/{user_id}",
+            json={"is_active": False},
+            headers={"X-CSRF-Token": token},
+        )
+        self.assertEqual(response.status_code, 400, response.get_json())
 
     def test_open_registration_and_login(self):
         token = self.csrf()
@@ -131,6 +184,25 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(data["per_page"], 20)
         self.assertEqual(len(data["items"]), 20)
         self.assertEqual(data["pages"], 2)
+        overflow = self.client.get("/api/monitors?page=999").get_json()
+        self.assertEqual(overflow["page"], 2)
+        self.assertEqual(len(overflow["items"]), 1)
+
+    def test_admin_pagination_is_clamped_to_last_page(self):
+        with self.app.app_context():
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            for index in range(18):
+                add_monitor(user, f"7656119{4000000000 + index:010d}")
+            for index in range(19):
+                db.session.add(User(username=f"page_user_{index}", password_hash="hash", role="user"))
+            db.session.commit()
+        self.login("cs2inventory_admin")
+        targets = self.client.get("/api/admin/targets?page=999").get_json()
+        users = self.client.get("/api/admin/users?page=999").get_json()
+        self.assertEqual(targets["page"], 2)
+        self.assertEqual(len(targets["items"]), 1)
+        self.assertEqual(users["page"], 2)
+        self.assertEqual(len(users["items"]), 1)
 
     def test_monitor_summary_uses_latest_scan_across_all_pages(self):
         self.login()
@@ -439,6 +511,13 @@ class PlatformTests(unittest.TestCase):
         self.assertIn('data-days="7"', html)
         self.assertNotIn("latest_detected_at", html)
         self.assertIn("timeZone:'Asia/Shanghai'", html)
+        self.assertIn('id="adminOverviewPage"', html)
+        self.assertIn('id="adminUsersPage"', html)
+        self.assertIn('id="adminTargetsPage"', html)
+        self.assertIn("?source=monitors&page=${state.page}", html)
+        self.assertIn("target_page=${state.adminTargetPage}", html)
+        self.assertIn("method:'DELETE'", html)
+        self.assertNotIn("user-toggle", html)
 
     def test_admin_can_open_any_target_snapshot_from_global_list(self):
         with self.app.app_context():
