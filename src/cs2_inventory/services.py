@@ -159,19 +159,16 @@ def add_monitor(user: User, steamid: str) -> tuple[SteamTarget, ScanJob | None, 
     target = SteamTarget.query.filter_by(steamid=steamid).first()
     created = False
     if target is None:
-        count = db.session.query(func.count(SteamTarget.id)).scalar() or 0
-        if count >= current_app.config["MAX_TARGETS"]:
-            raise OverflowError("平台 35 个唯一监控名额已满")
         target = SteamTarget(steamid=steamid)
         db.session.add(target)
         try:
             db.session.flush()
             created = True
-        except IntegrityError as exc:
+        except IntegrityError:
             db.session.rollback()
             target = SteamTarget.query.filter_by(steamid=steamid).first()
             if target is None:
-                raise OverflowError("平台 35 个唯一监控名额已满") from exc
+                raise
     if Subscription.query.filter_by(user_id=user_id, target_id=target.id).first():
         return target, None, False
     db.session.add(Subscription(user_id=user_id, target_id=target.id))
@@ -324,8 +321,10 @@ def quota_status() -> dict:
     return {
         "daily_used": int(daily or 0),
         "daily_budget": current_app.config["INVENTORY_DAILY_BUDGET"],
+        "daily_budget_enforced": False,
         "billing_used": int(monthly or 0),
         "billing_budget": current_app.config["INVENTORY_MONTHLY_BUDGET"],
+        "billing_budget_enforced": True,
         "reserve": current_app.config["INVENTORY_RESERVE"],
     }
 
@@ -334,7 +333,5 @@ def quota_allows_scan(*, admin: bool = False) -> bool:
     quota = quota_status()
     credits = current_app.config["REQUESTS_PER_SCAN"]
     if quota["billing_used"] + credits > quota["billing_budget"]:
-        return False
-    if not admin and quota["daily_used"] + credits > quota["daily_budget"]:
         return False
     return True

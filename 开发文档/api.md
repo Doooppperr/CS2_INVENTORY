@@ -24,6 +24,8 @@
 
 管理员状态接口的 `localization` 对象包含 `mappings`、`pending_jobs`、`pending_items` 和 `failed_jobs`，用于观测名称映射和补译队列。
 
+`GET api/monitors` 返回 `platform_targets`、`platform_limit` 和 `platform_limit_enforced=false`；`GET api/admin/status` 返回 `targets`、`target_limit` 和 `target_limit_enforced=false`。其中 35 仅为控制台参考值。`quota.daily_budget_enforced=false` 表示每日额度只统计并允许超过；`quota.billing_budget_enforced=true` 表示账期预算仍由 Worker 执行。
+
 # 账号与分页约定（2026-08-19）
 
 账号管理不提供停用或恢复语义。删除成功返回 `ok`、`deleted_user_id` 和 `deleted_targets`。监控、管理员用户、管理员目标三个列表接口均规范化 `page`，前端通过 `view`、`section`、`page`、`user_page`、`target_page` 保存导航状态。

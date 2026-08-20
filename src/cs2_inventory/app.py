@@ -52,12 +52,10 @@ BOOTSTRAP_SEED_VERSION = "1"
 
 def bootstrap_data() -> None:
     db.create_all()
-    db.session.execute(text("""
-        CREATE TRIGGER IF NOT EXISTS trg_steam_target_capacity
-        BEFORE INSERT ON steam_targets
-        WHEN (SELECT COUNT(*) FROM steam_targets) >= 35
-        BEGIN SELECT RAISE(ABORT, 'platform target limit reached'); END
-    """))
+    # Capacity is an observability benchmark, not an insertion constraint.
+    # Drop the legacy trigger as a second line of defense for installations
+    # that initialized the database before the soft-limit migration existed.
+    db.session.execute(text("DROP TRIGGER IF EXISTS trg_steam_target_capacity"))
     if db.session.get(SystemState, "bootstrap_seed_version"):
         db.session.commit()
         return
@@ -223,6 +221,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             "per_page": app.config["PAGE_SIZE"],
             "platform_targets": SteamTarget.query.count(),
             "platform_limit": app.config["MAX_TARGETS"],
+            "platform_limit_enforced": False,
             "latest_scan_at": beijing_iso(latest_scan_at),
         })
 
@@ -432,6 +431,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             "maintenance_message": state_get("maintenance_message", ""),
             "targets": SteamTarget.query.count(),
             "target_limit": app.config["MAX_TARGETS"],
+            "target_limit_enforced": False,
             "pending_jobs": running,
             "quota": quota_status(),
             "official_quota": official,

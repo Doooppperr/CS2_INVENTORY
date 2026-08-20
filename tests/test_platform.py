@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+from sqlalchemy import text
 from werkzeug.security import generate_password_hash
 
 from cs2_inventory.app import bootstrap_data, create_app
@@ -16,6 +17,7 @@ from cs2_inventory.localization import repair_retained_snapshots
 from cs2_inventory.models import (
     ItemNameLocalization,
     LocalizationJob,
+    QuotaUsage,
     ScanBatch,
     ScanJob,
     Snapshot,
@@ -30,6 +32,8 @@ from cs2_inventory.models import (
 from cs2_inventory.services import (
     add_monitor,
     prune_expired,
+    quota_allows_scan,
+    quota_status,
     snapshot_diff,
     snapshot_public,
     store_snapshot,
@@ -216,14 +220,33 @@ class PlatformTests(unittest.TestCase):
         data = self.client.get("/api/monitors?page=1").get_json()
         self.assertEqual(data["latest_scan_at"], "2026-08-15T09:30:00+08:00")
 
-    def test_platform_cap_is_thirty_five_unique_targets(self):
+    def test_platform_reference_count_can_be_exceeded(self):
         with self.app.app_context():
             user = User.query.filter_by(username="cs2inventory_user").one()
-            for index in range(32):
+            for index in range(34):
                 add_monitor(user, f"7656119{2000000000 + index:010d}")
-            self.assertEqual(SteamTarget.query.count(), 35)
-            with self.assertRaises(OverflowError):
-                add_monitor(user, "76561199999999999")
+            self.assertEqual(SteamTarget.query.count(), 37)
+            trigger = db.session.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_steam_target_capacity'"
+            )).first()
+            self.assertIsNone(trigger)
+
+        token = self.login("cs2inventory_admin")
+        status = self.client.get("/api/admin/status", headers={"X-CSRF-Token": token}).get_json()
+        self.assertEqual(status["targets"], 37)
+        self.assertEqual(status["target_limit"], 35)
+        self.assertFalse(status["target_limit_enforced"])
+
+    def test_daily_budget_is_observability_only(self):
+        with self.app.app_context():
+            db.session.add(QuotaUsage(endpoint="inventory", credits=301, source="test"))
+            db.session.commit()
+            status = quota_status()
+            self.assertEqual(status["daily_used"], 301)
+            self.assertEqual(status["daily_budget"], 300)
+            self.assertFalse(status["daily_budget_enforced"])
+            self.assertTrue(status["billing_budget_enforced"])
+            self.assertTrue(quota_allows_scan())
 
     def test_maintenance_blocks_user_but_admin_can_add(self):
         user_token = self.login()
