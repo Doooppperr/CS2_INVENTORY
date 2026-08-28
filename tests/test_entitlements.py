@@ -124,6 +124,8 @@ class EntitlementTests(unittest.TestCase):
     def test_warm_landing_and_three_part_admin_console_navigation(self):
         landing = self.client.get("/").get_data(as_text=True)
         self.assertIn("开始免费体验", landing)
+        self.assertIn("一键完成库存追踪", landing)
+        self.assertNotIn("一处完成库存追踪", landing)
         self.assertIn("--orange:#e9853d", landing)
         self.assertIn("background-image:linear-gradient", landing)
 
@@ -137,6 +139,17 @@ class EntitlementTests(unittest.TestCase):
         self.assertLess(console.index('id="adminUsersPage"'), console.index('id="adminCodesPage"'))
         self.assertLess(console.index('id="adminCodesPage"'), console.index('id="adminTargetsPage"'))
         self.assertIn("/* Warm retro console theme */", console)
+
+    def test_logged_in_landing_has_one_console_action_and_detail_back_url_has_no_slash_404(self):
+        landing = self.client.get("/").get_data(as_text=True)
+        self.assertNotIn('>获取套餐</a>', landing)
+        self.assertIn("const [primary,...duplicates]=document.querySelectorAll('[data-auth]')", landing)
+        self.assertIn("duplicates.forEach(b=>b.hidden=true)", landing)
+
+        console = self.client.get("/app").get_data(as_text=True)
+        self.assertIn("value.startsWith('?')?`app${value}`:`app/${value}`", console)
+        self.assertEqual(self.client.get("/app/").status_code, 200)
+        self.assertEqual(self.client.get("/app/monitors/999/").status_code, 200)
 
     def test_successful_trial_is_pinned_for_seven_days_and_cannot_reimport(self):
         self.register()

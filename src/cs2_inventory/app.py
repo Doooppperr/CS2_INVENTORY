@@ -131,12 +131,12 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         csrf_token()
         return render_template("landing.html")
 
-    @app.get("/app")
+    @app.get("/app", strict_slashes=False)
     def application():
         csrf_token()
         return render_template("index.html")
 
-    @app.get("/app/monitors/<int:_target_id>")
+    @app.get("/app/monitors/<int:_target_id>", strict_slashes=False)
     def application_monitor_page(_target_id):
         csrf_token()
         return render_template("index.html")
