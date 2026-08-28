@@ -139,6 +139,8 @@ class EntitlementTests(unittest.TestCase):
         self.assertLess(console.index('id="adminUsersPage"'), console.index('id="adminCodesPage"'))
         self.assertLess(console.index('id="adminCodesPage"'), console.index('id="adminTargetsPage"'))
         self.assertIn("/* Warm retro console theme */", console)
+        self.assertIn("grid-template-columns:minmax(0,1fr) 76px", console)
+        self.assertIn(".remark-edit{align-self:center;justify-self:center;margin:0", console)
 
     def test_logged_in_landing_has_one_console_action_and_detail_back_url_has_no_slash_404(self):
         landing = self.client.get("/").get_data(as_text=True)
