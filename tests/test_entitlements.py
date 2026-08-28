@@ -97,6 +97,30 @@ class EntitlementTests(unittest.TestCase):
         self.assertEqual(self.client.get("/app").status_code, 200)
         self.client.post("/api/auth/logout", headers={"X-CSRF-Token": token})
 
+    def test_landing_login_accepts_legacy_short_password_but_registration_requires_eight(self):
+        landing = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="password" type="password" minlength="1"', landing)
+        self.assertIn("password.minLength=register?8:1", landing)
+        self.assertIn("password.autocomplete=register?'new-password':'current-password'", landing)
+
+        with self.app.app_context():
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            user.password_hash = generate_password_hash("123456")
+            db.session.commit()
+        response = self.client.post(
+            "/api/auth/login",
+            json={"username": "cs2inventory_user", "password": "123456"},
+            headers={"X-CSRF-Token": self.csrf()},
+        )
+        self.assertEqual(response.status_code, 200, response.get_json())
+
+        register = self.client.post(
+            "/api/auth/register",
+            json={"username": "short_password", "password": "123456"},
+            headers={"X-CSRF-Token": self.csrf()},
+        )
+        self.assertEqual(register.status_code, 400, register.get_json())
+
     def test_successful_trial_is_pinned_for_seven_days_and_cannot_reimport(self):
         self.register()
         token = self.login()
