@@ -13,7 +13,7 @@
 2. 停止 Web、Worker、每日 timer 和清理 timer，使用 SQLite backup API 创建备份并执行 `PRAGMA integrity_check`。
 3. 执行 `20260828_07` 后核对用户、订阅、目标和快照计数不变；确认既有账号 `account_kind=internal`、`plan=permanent`、`monitor_limit IS NULL`。
 4. 安装并启用 `cs2-inventory-cleanup.service/.timer`；验证每日任务只包含有效正式或内部订阅目标。
-5. 验证 `/` 落地页、`/app` 控制台、邀请码创建/兑换、备注、限额拒绝及宽限冻结接口。
+5. 验证 `/` 暖色复古落地页、`/app` 控制台返回首页入口、三个管理员板块、用户管理内的邀请码创建/兑换、备注、限额拒绝及宽限冻结接口。
 6. 回滚必须同时恢复上一 release、`pre-deploy-<commit>/cs2_inventory.db` 和备份的 systemd units；不能只执行 Alembic downgrade 或切换代码。
 
 Apache 保留 `http://111.229.87.94/cs2_inventory/` 入口，代理转发到 `127.0.0.1:5060`。

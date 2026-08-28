@@ -121,6 +121,23 @@ class EntitlementTests(unittest.TestCase):
         )
         self.assertEqual(register.status_code, 400, register.get_json())
 
+    def test_warm_landing_and_three_part_admin_console_navigation(self):
+        landing = self.client.get("/").get_data(as_text=True)
+        self.assertIn("开始免费体验", landing)
+        self.assertIn("--orange:#e9853d", landing)
+        self.assertIn("background-image:linear-gradient", landing)
+
+        console = self.client.get("/app").get_data(as_text=True)
+        self.assertIn('id="homeLink"', console)
+        self.assertIn("$('homeLink').onclick=()=>location.href=appUrl('')", console)
+        self.assertEqual(console.count('data-section="'), 3)
+        self.assertNotIn('id="adminCodesTab"', console)
+        self.assertIn("['overview','users','targets']", console)
+        self.assertIn("Promise.all([api(`api/admin/users", console)
+        self.assertLess(console.index('id="adminUsersPage"'), console.index('id="adminCodesPage"'))
+        self.assertLess(console.index('id="adminCodesPage"'), console.index('id="adminTargetsPage"'))
+        self.assertIn("/* Warm retro console theme */", console)
+
     def test_successful_trial_is_pinned_for_seven_days_and_cannot_reimport(self):
         self.register()
         token = self.login()
