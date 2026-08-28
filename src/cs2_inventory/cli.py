@@ -4,6 +4,7 @@ import argparse
 
 from .app import create_app
 from .database import db
+from .entitlements import cleanup_lifecycle, target_daily_eligible
 from .localization import repair_retained_snapshots
 from .models import ScanBatch, ScanJob, SteamTarget, utcnow
 from .services import prune_expired, state_set
@@ -11,11 +12,16 @@ from .worker import refresh_official_usage, worker_loop
 
 
 def enqueue_daily() -> dict:
+    cleanup_lifecycle()
     active = ScanBatch.query.filter(ScanBatch.kind == "daily", ScanBatch.status.in_(["queued", "running"])).first()
     if active:
         return {"batch_id": active.id, "jobs": active.total_jobs, "existing": True}
     refresh_official_usage()
-    targets = SteamTarget.query.order_by(SteamTarget.id.asc()).all()
+    targets = [
+        target
+        for target in SteamTarget.query.order_by(SteamTarget.id.asc()).all()
+        if target_daily_eligible(target)
+    ]
     batch = ScanBatch(kind="daily", status="running", total_jobs=len(targets), started_at=utcnow())
     db.session.add(batch)
     db.session.flush()
@@ -36,7 +42,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["init-db", "enqueue-daily", "prune", "worker-once", "localization-report", "repair-localized-names"],
+        choices=["init-db", "enqueue-daily", "prune", "cleanup-accounts", "worker-once", "localization-report", "repair-localized-names"],
     )
     parser.add_argument("--apply", action="store_true", help="commit trusted localization repairs")
     args = parser.parse_args(argv)
@@ -52,6 +58,8 @@ def main(argv=None) -> int:
             print(enqueue_daily())
         elif args.command == "prune":
             print(prune_expired())
+        elif args.command == "cleanup-accounts":
+            print(cleanup_lifecycle())
         elif args.command in {"localization-report", "repair-localized-names"}:
             result = repair_retained_snapshots(
                 dry_run=not args.apply,

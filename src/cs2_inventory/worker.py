@@ -14,6 +14,7 @@ from flask import current_app
 from . import inventory_engine
 from .app import create_app
 from .database import db
+from .entitlements import complete_trial_for_job, scan_job_eligible
 from .inventory_engine import run_max_coverage_query
 from .localization import process_localization_job
 from .models import (
@@ -197,6 +198,13 @@ def process_job(job_id: int) -> None:
     job = db.session.get(ScanJob, job_id)
     if not job:
         return
+    if not scan_job_eligible(job):
+        job.status = "cancelled"
+        job.error = "监控账号权益已到期"
+        job.finished_at = utcnow()
+        db.session.commit()
+        finish_batch(job.batch_id)
+        return
     is_admin_job = job.kind in {"manual", "instant"}
     if not quota_allows_scan(admin=is_admin_job):
         job.status = "failed"
@@ -239,7 +247,8 @@ def process_job(job_id: int) -> None:
             ):
                 target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
                 target.profile_updated_at = utcnow()
-            store_snapshot(target, unified)
+            snapshot = store_snapshot(target, unified)
+            complete_trial_for_job(job, snapshot)
             job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
         else:
             job.result_json = json.dumps(

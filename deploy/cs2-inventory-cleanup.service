@@ -1,0 +1,19 @@
+[Unit]
+Description=Clean expired CS2 Inventory trial and entitlement data
+After=cs2-inventory-web.service
+
+[Service]
+Type=oneshot
+User=cs2inventory
+Group=cs2inventory
+WorkingDirectory=/opt/cs2-inventory/current
+EnvironmentFile=/etc/cs2-inventory.env
+Environment=PYTHONPATH=/opt/cs2-inventory/current/src
+Environment=CS2_STATE_DIR=/var/lib/cs2-inventory
+Environment=INVENTORY_OBSERVATION_CACHE=/var/lib/cs2-inventory/observations.json
+ExecStart=/opt/cs2-inventory/venv/bin/python -m cs2_inventory.cli cleanup-accounts
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=cs2-inventory

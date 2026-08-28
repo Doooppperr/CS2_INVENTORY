@@ -32,9 +32,20 @@ class User(db.Model):
     password_changed_at = db.Column(db.DateTime(timezone=True))
     role = db.Column(db.String(16), nullable=False, default="user")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    account_kind = db.Column(db.String(16), nullable=False, default="trial")
+    plan = db.Column(db.String(16))
+    activated_at = db.Column(db.DateTime(timezone=True))
+    activation_expires_at = db.Column(db.DateTime(timezone=True))
+    monitor_limit = db.Column(db.Integer)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     last_login_at = db.Column(db.DateTime(timezone=True))
     subscriptions = db.relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    trial_experience = db.relationship(
+        "TrialExperience",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class SteamTarget(db.Model):
@@ -57,10 +68,39 @@ class Subscription(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     target_id = db.Column(db.Integer, db.ForeignKey("steam_targets.id", ondelete="CASCADE"), nullable=False)
+    remark = db.Column(db.String(50))
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     user = db.relationship("User", back_populates="subscriptions")
     target = db.relationship("SteamTarget", back_populates="subscriptions")
     __table_args__ = (UniqueConstraint("user_id", "target_id", name="uq_subscription"),)
+
+
+class TrialExperience(db.Model):
+    __tablename__ = "trial_experiences"
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    steamid = db.Column(db.String(17))
+    current_target_id = db.Column(db.Integer, db.ForeignKey("steam_targets.id", ondelete="SET NULL"))
+    current_job_id = db.Column(db.Integer, db.ForeignKey("scan_jobs.id", ondelete="SET NULL"))
+    result_snapshot_id = db.Column(db.Integer, db.ForeignKey("snapshots.id", ondelete="SET NULL"))
+    registration_expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    completed_at = db.Column(db.DateTime(timezone=True))
+    result_expires_at = db.Column(db.DateTime(timezone=True))
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    user = db.relationship("User", back_populates="trial_experience")
+
+
+class ActivationCode(db.Model):
+    __tablename__ = "activation_codes"
+    id = db.Column(db.Integer, primary_key=True)
+    code_digest = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    code_prefix = db.Column(db.String(16), nullable=False)
+    plan = db.Column(db.String(16), nullable=False)
+    monitor_limit = db.Column(db.Integer, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    redeemed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"))
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    redeemed_at = db.Column(db.DateTime(timezone=True))
+    revoked_at = db.Column(db.DateTime(timezone=True))
 
 
 class Snapshot(db.Model):

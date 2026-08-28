@@ -3,13 +3,16 @@
 所有修改请求携带 `X-CSRF-Token`，登录态使用 HttpOnly、SameSite=Lax Cookie。
 
 - `POST api/auth/register|login|logout|password`
+- `POST api/activation/redeem`：登录用户原子兑换一次性邀请码。
 - `GET|POST api/monitors`：每页固定 20 条及添加监控。
-- `GET|DELETE api/monitors/<id>`：统一库存详情及取消订阅。
+- `GET|PATCH|DELETE api/monitors/<id>`：统一库存详情、私有备注及取消订阅。
 - `GET api/monitors/<id>/snapshots/<snapshot_id>`：快照与新增、移除、数量变化。
 - `GET api/monitors/<id>/compare?days=1|3|7`：最新快照与指定天数前基准快照的差异。
 - `GET api/jobs/<id>`：后台任务状态。
 - `GET api/admin/users|targets|status`：管理员用户、目标与概览数据；分页越界时返回最后一个有效页。
-- `PATCH api/admin/users/<id>`：仅重置密码，不再接受账号停用状态。
+- `PATCH api/admin/users/<id>`：重置密码或调整正式客户监控限额，不接受账号停用状态。
+- `GET|POST api/admin/activation-codes`：分页列出邀请码或生成一次性邀请码；列表不返回摘要和完整码。
+- `DELETE api/admin/activation-codes/<id>`：撤销尚未兑换的邀请码。
 - `DELETE api/admin/users/<id>`：永久删除账号及订阅，共享目标保留，无主目标及其快照随之删除；当前管理员不能删除自身。
 - `DELETE api/admin/targets/<id>`：管理员强制删除平台目标及其快照。
 - `POST api/admin/query`：一小时有效的即时查询结果。
@@ -23,6 +26,10 @@
 库存接口继续只公开 `name`、`count`、`is_trade_protected`，不公开内部的 `raw_name`、`classid`、`instanceid` 或 `name_localized`。`snapshot_diff` 先按 `asset_key` 对齐，再通过官方名称映射聚合；同一资产仅发生中英文切换时，`added`、`removed`、`changed` 均为空。
 
 管理员状态接口的 `localization` 对象包含 `mappings`、`pending_jobs`、`pending_items` 和 `failed_jobs`，用于观测名称映射和补译队列。
+
+`GET api/bootstrap` 的 `user.entitlement` 与 `GET api/monitors` 的 `entitlement` 返回账号类别、套餐、派生状态、到期/宽限时间、监控用量/限额、是否允许新增及体验截止。体验固定快照和付费宽限截止由所有详情、历史、显式快照与对比接口一致执行。
+
+用户监控元素增加 `remark`，`label` 的有备注格式为 `备注名 -（Steam名）- SteamID64`；管理员全局目标接口继续返回不含用户备注的全局标签。
 
 `GET api/monitors` 返回 `platform_targets`、`platform_limit` 和 `platform_limit_enforced=false`；`GET api/admin/status` 返回 `targets`、`target_limit` 和 `target_limit_enforced=false`。其中 35 仅为控制台参考值。`quota.daily_budget_enforced=false` 表示每日额度只统计并允许超过；`quota.billing_budget_enforced=true` 表示账期预算仍由 Worker 执行。
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Clean expired CS2 Inventory accounts every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+AccuracySec=1min
+Unit=cs2-inventory-cleanup.service
+
+[Install]
+WantedBy=timers.target

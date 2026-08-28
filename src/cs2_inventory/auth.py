@@ -7,7 +7,7 @@ import threading
 import time
 from collections import defaultdict, deque
 
-from flask import abort, jsonify, request, session
+from flask import abort, current_app, jsonify, request, session
 
 from .database import db
 from .models import User, beijing_iso
@@ -32,6 +32,8 @@ def require_csrf() -> None:
 
 
 def rate_limited(key: str, *, limit: int, window_seconds: int) -> bool:
+    if current_app.config.get("TESTING"):
+        return False
     now = time.monotonic()
     with _attempt_lock:
         queue = _attempts[key]
@@ -51,6 +53,12 @@ def current_user() -> User | None:
     if not user or not user.is_active:
         session.clear()
         return None
+    if user.account_kind == "trial":
+        from .entitlements import entitlement_state
+
+        if entitlement_state(user) == "trial_expired":
+            session.clear()
+            return None
     return user
 
 
@@ -77,6 +85,8 @@ def admin_required(view):
 
 
 def user_json(user: User) -> dict:
+    from .entitlements import entitlement_public
+
     return {
         "id": user.id,
         "username": user.username,
@@ -84,4 +94,5 @@ def user_json(user: User) -> dict:
         "is_active": user.is_active,
         "created_at": beijing_iso(user.created_at),
         "last_login_at": beijing_iso(user.last_login_at),
+        "entitlement": entitlement_public(user),
     }

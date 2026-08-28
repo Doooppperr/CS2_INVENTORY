@@ -14,18 +14,28 @@ legacy_active=$(systemctl is-active cs2-inventory.service 2>/dev/null || true)
 rollback() {
   code=$?
   if [[ $code -ne 0 ]]; then
-    systemctl stop cs2-inventory-web cs2-inventory-worker >/dev/null 2>&1 || true
+    systemctl stop cs2-inventory-web cs2-inventory-worker cs2-inventory-cleanup.timer >/dev/null 2>&1 || true
     if [[ -n "$old" && -d "$old" ]]; then ln -sfn "$old" "$current.rollback"; mv -Tf "$current.rollback" "$current"; fi
-    if [[ -f "$backup/cs2_inventory.db" ]]; then cp -f "$backup/cs2_inventory.db" "$state/cs2_inventory.db"; chown cs2inventory:cs2inventory "$state/cs2_inventory.db"; fi
-    for unit in web worker schedule.service schedule.timer; do
+    if [[ -f "$backup/cs2_inventory.db" ]]; then
+      rm -f "$state/cs2_inventory.db-wal" "$state/cs2_inventory.db-shm"
+      cp -f "$backup/cs2_inventory.db" "$state/cs2_inventory.db"
+      chown cs2inventory:cs2inventory "$state/cs2_inventory.db"
+    fi
+    for unit in web worker schedule.service schedule.timer cleanup.service cleanup.timer; do
       src="$backup/cs2-inventory-$unit"
-      [[ -f "$src" ]] && cp -f "$src" "/etc/systemd/system/cs2-inventory-$unit"
+      if [[ -f "$src" ]]; then
+        cp -f "$src" "/etc/systemd/system/cs2-inventory-$unit"
+      else
+        rm -f "/etc/systemd/system/cs2-inventory-$unit"
+      fi
     done
     systemctl daemon-reload
     if [[ "$legacy_active" == "active" ]]; then
       systemctl enable --now cs2-inventory.service || true
     else
       systemctl restart cs2-inventory-web cs2-inventory-worker || true
+      systemctl start cs2-inventory-schedule.timer || true
+      systemctl start cs2-inventory-cleanup.timer || true
     fi
     echo "ROLLBACK old=$old exit=$code" >&2
   fi
@@ -35,9 +45,20 @@ trap rollback EXIT
 
 install -d -o cs2inventory -g cs2inventory -m 0750 "$state"
 install -d -o root -g root -m 0755 "$backup" "$release"
-systemctl stop cs2-inventory-web cs2-inventory-worker
-[[ -f "$state/cs2_inventory.db" ]] && cp -a "$state/cs2_inventory.db" "$backup/cs2_inventory.db"
-for unit in web worker schedule.service schedule.timer; do
+systemctl stop cs2-inventory-web cs2-inventory-worker cs2-inventory-schedule.timer
+systemctl stop cs2-inventory-schedule.service cs2-inventory-cleanup.timer cs2-inventory-cleanup.service >/dev/null 2>&1 || true
+if [[ -f "$state/cs2_inventory.db" ]]; then
+  python3 - "$state/cs2_inventory.db" "$backup/cs2_inventory.db" <<'PY'
+import sqlite3, sys
+source = sqlite3.connect(sys.argv[1])
+target = sqlite3.connect(sys.argv[2])
+with target:
+    source.backup(target)
+assert target.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+target.close(); source.close()
+PY
+fi
+for unit in web worker schedule.service schedule.timer cleanup.service cleanup.timer; do
   src="/etc/systemd/system/cs2-inventory-$unit"
   [[ -f "$src" ]] && cp -a "$src" "$backup/cs2-inventory-$unit"
 done
@@ -57,13 +78,16 @@ install -o root -g root -m 0644 "$release/deploy/cs2-inventory-web.service" /etc
 install -o root -g root -m 0644 "$release/deploy/cs2-inventory-worker.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$release/deploy/cs2-inventory-schedule.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$release/deploy/cs2-inventory-schedule.timer" /etc/systemd/system/
+install -o root -g root -m 0644 "$release/deploy/cs2-inventory-cleanup.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$release/deploy/cs2-inventory-cleanup.timer" /etc/systemd/system/
 ln -sfn "$release" "$current.next"
 mv -Tf "$current.next" "$current"
 systemctl daemon-reload
 systemctl disable --now cs2-inventory.service >/dev/null 2>&1 || true
-systemctl enable cs2-inventory-web cs2-inventory-worker cs2-inventory-schedule.timer
+systemctl enable cs2-inventory-web cs2-inventory-worker cs2-inventory-schedule.timer cs2-inventory-cleanup.timer
 systemctl restart cs2-inventory-web cs2-inventory-worker
 systemctl start cs2-inventory-schedule.timer
+systemctl start cs2-inventory-cleanup.timer
 
 healthy=0
 for _ in $(seq 1 30); do
@@ -72,8 +96,8 @@ for _ in $(seq 1 30); do
 done
 test "$healthy" -eq 1
 cat /tmp/cs2-ready.json; echo
-systemctl is-active cs2-inventory-web cs2-inventory-worker
-systemctl is-enabled cs2-inventory-schedule.timer
+systemctl is-active cs2-inventory-web cs2-inventory-worker cs2-inventory-schedule.timer cs2-inventory-cleanup.timer
+systemctl is-enabled cs2-inventory-schedule.timer cs2-inventory-cleanup.timer
 echo "DEPLOYED_COMMIT=$commit"
 echo "OLD_RELEASE=$old"
 echo "NEW_RELEASE=$release"

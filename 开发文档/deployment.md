@@ -7,6 +7,15 @@
 5. 验证 Web、Worker、Timer、IP 路径和 HealthDoc 服务。
 6. 对比服务器发布目录、GitHub `main` 和本地 commit SHA。
 
+# 权益与邀请码发布（2026-08-28）
+
+1. 上线前只读导出生产用户清单，确认当前既有账号范围；迁移会将执行时已经存在的账号回填为内部永久无限。
+2. 停止 Web、Worker、每日 timer 和清理 timer，使用 SQLite backup API 创建备份并执行 `PRAGMA integrity_check`。
+3. 执行 `20260828_07` 后核对用户、订阅、目标和快照计数不变；确认既有账号 `account_kind=internal`、`plan=permanent`、`monitor_limit IS NULL`。
+4. 安装并启用 `cs2-inventory-cleanup.service/.timer`；验证每日任务只包含有效正式或内部订阅目标。
+5. 验证 `/` 落地页、`/app` 控制台、邀请码创建/兑换、备注、限额拒绝及宽限冻结接口。
+6. 回滚必须同时恢复上一 release、`pre-deploy-<commit>/cs2_inventory.db` 和备份的 systemd units；不能只执行 Alembic downgrade 或切换代码。
+
 Apache 保留 `http://111.229.87.94/cs2_inventory/` 入口，代理转发到 `127.0.0.1:5060`。
 
 # 软容量与每日额度发布（2026-08-20）

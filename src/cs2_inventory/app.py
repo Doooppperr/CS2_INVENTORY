@@ -19,7 +19,20 @@ from .auth import (
 )
 from .config import Config
 from .database import db
+from .entitlements import (
+    activation_code_public,
+    create_activation_code,
+    ensure_trial_experience,
+    entitlement_public,
+    entitlement_state,
+    redeem_activation_code,
+    remove_expired_trial_username,
+    revoke_activation_code,
+    snapshot_query_for_user,
+    state_allows_monitor_write,
+)
 from .models import (
+    ActivationCode,
     ItemNameLocalization,
     LocalizationJob,
     ScanJob,
@@ -38,6 +51,7 @@ from .services import (
     delete_user_account,
     ensure_mutation_allowed,
     maintenance_active,
+    monitor_public,
     queue_job,
     quota_status,
     snapshot_diff,
@@ -77,7 +91,14 @@ def bootstrap_data() -> None:
         ),
     )
     for username, password_hash, role in seeds:
-        db.session.add(User(username=username, password_hash=password_hash, role=role))
+        db.session.add(User(
+            username=username,
+            password_hash=password_hash,
+            role=role,
+            account_kind="internal",
+            plan="permanent",
+            monitor_limit=None,
+        ))
     state_set("bootstrap_seed_version", BOOTSTRAP_SEED_VERSION)
     db.session.commit()
 
@@ -107,6 +128,16 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
 
     @app.get("/")
     def index():
+        csrf_token()
+        return render_template("landing.html")
+
+    @app.get("/app")
+    def application():
+        csrf_token()
+        return render_template("index.html")
+
+    @app.get("/app/monitors/<int:_target_id>")
+    def application_monitor_page(_target_id):
         csrf_token()
         return render_template("index.html")
 
@@ -150,11 +181,14 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"error": "用户名只能包含字母、数字和下划线，长度 3-32"}), 400
         if len(password) < 8 or len(password) > 72:
             return jsonify({"error": "密码长度必须为 8-72"}), 400
+        remove_expired_trial_username(username)
         if User.query.filter(func.lower(User.username) == username.lower()).first():
             return jsonify({"error": "用户名已存在"}), 409
-        user = User(username=username, password_hash="", role="user")
+        user = User(username=username, password_hash="", role="user", account_kind="trial")
         set_user_password(user, password)
         db.session.add(user)
+        db.session.flush()
+        ensure_trial_experience(user)
         db.session.commit()
         return jsonify({"user": user_json(user)}), 201
 
@@ -202,10 +236,34 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         db.session.commit()
         return jsonify({"ok": True})
 
+    @app.post("/api/activation/redeem")
+    @login_required
+    def activation_redeem(user):
+        require_csrf()
+        data = request.get_json(silent=True) or {}
+        try:
+            row = redeem_activation_code(user, str(data.get("code") or ""))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify({"ok": True, "plan": row.plan, "user": user_json(user)})
+
     @app.get("/api/monitors")
     @login_required
     def monitors(user):
-        query = SteamTarget.query.join(Subscription).filter(Subscription.user_id == user.id).order_by(SteamTarget.created_at.desc())
+        user_state = entitlement_state(user)
+        if user_state == "expired":
+            return jsonify({
+                "items": [], "page": 1, "pages": 0, "total": 0,
+                "per_page": app.config["PAGE_SIZE"],
+                "platform_targets": SteamTarget.query.count(),
+                "platform_limit": app.config["MAX_TARGETS"],
+                "platform_limit_enforced": False,
+                "latest_scan_at": None,
+                "entitlement": entitlement_public(user),
+            })
+        query = Subscription.query.filter_by(user_id=user.id).join(SteamTarget).order_by(SteamTarget.created_at.desc())
         page, pagination = canonical_pagination(query, per_page=app.config["PAGE_SIZE"])
         latest_scan_at = (
             db.session.query(func.max(SteamTarget.last_scan_at))
@@ -213,8 +271,17 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             .filter(Subscription.user_id == user.id)
             .scalar()
         )
+        if user_state in {"grace", "trial_result"}:
+            visible_times = [
+                row.scanned_at
+                for sub in user.subscriptions
+                if (row := snapshot_query_for_user(user, sub.target_id).order_by(
+                    Snapshot.scanned_at.desc(), Snapshot.id.desc()
+                ).first())
+            ]
+            latest_scan_at = max(visible_times) if visible_times else None
         return jsonify({
-            "items": [target_public(target) for target in pagination.items],
+            "items": [monitor_public(subscription, user) for subscription in pagination.items],
             "page": page,
             "pages": pagination.pages,
             "total": pagination.total,
@@ -223,6 +290,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             "platform_limit": app.config["MAX_TARGETS"],
             "platform_limit_enforced": False,
             "latest_scan_at": beijing_iso(latest_scan_at),
+            "entitlement": entitlement_public(user),
         })
 
     @app.post("/api/monitors")
@@ -239,26 +307,35 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"error": str(exc)}), 400
         except OverflowError as exc:
             return jsonify({"error": str(exc)}), 409
-        return jsonify({"monitor": target_public(target), "job_id": job.id if job else None, "created_target": created}), 201
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+        subscription = Subscription.query.filter_by(user_id=user.id, target_id=target.id).one()
+        return jsonify({"monitor": monitor_public(subscription, user), "job_id": job.id if job else None, "created_target": created}), 201
 
-    def accessible_target(user: User, target_id: int) -> SteamTarget | None:
+    def accessible_target(user: User, target_id: int) -> tuple[SteamTarget, Subscription | None] | None:
         target = db.session.get(SteamTarget, target_id)
         if not target:
             return None
-        if user.role == "admin" or Subscription.query.filter_by(user_id=user.id, target_id=target.id).first():
-            return target
+        if user.role == "admin":
+            return target, None
+        if entitlement_state(user) == "expired":
+            return None
+        subscription = Subscription.query.filter_by(user_id=user.id, target_id=target.id).first()
+        if subscription:
+            return target, subscription
         return None
 
     @app.get("/api/monitors/<int:target_id>")
     @login_required
     def monitor_detail(user, target_id):
-        target = accessible_target(user, target_id)
-        if not target:
+        access = accessible_target(user, target_id)
+        if not access:
             return jsonify({"error": "监控不存在"}), 404
-        history = Snapshot.query.filter_by(target_id=target.id).order_by(Snapshot.scanned_at.desc()).all()
+        target, subscription = access
+        history = snapshot_query_for_user(user, target.id).order_by(Snapshot.scanned_at.desc()).all()
         latest = history[0] if history else None
         return jsonify({
-            "monitor": target_public(target, include_latest=False),
+            "monitor": target_public(target, include_latest=False) if subscription is None else monitor_public(subscription, user, include_latest=False),
             "snapshot": snapshot_public(latest) if latest else None,
             "history": [snapshot_public(row, include_items=False) for row in history],
         })
@@ -266,24 +343,28 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/monitors/<int:target_id>/snapshots/<int:snapshot_id>")
     @login_required
     def monitor_snapshot(user, target_id, snapshot_id):
-        target = accessible_target(user, target_id)
-        snapshot = db.session.get(Snapshot, snapshot_id)
-        if not target or not snapshot or snapshot.target_id != target.id:
+        access = accessible_target(user, target_id)
+        snapshot = snapshot_query_for_user(user, target_id).filter(Snapshot.id == snapshot_id).first() if access else None
+        if not access or not snapshot:
             return jsonify({"error": "快照不存在"}), 404
-        previous = Snapshot.query.filter(Snapshot.target_id == target.id, Snapshot.scanned_at < snapshot.scanned_at).order_by(Snapshot.scanned_at.desc()).first()
+        target, _subscription = access
+        previous = snapshot_query_for_user(user, target.id).filter(
+            Snapshot.scanned_at < snapshot.scanned_at
+        ).order_by(Snapshot.scanned_at.desc()).first()
         return jsonify({"snapshot": snapshot_public(snapshot), "diff": snapshot_diff(snapshot, previous)})
 
     @app.get("/api/monitors/<int:target_id>/compare")
     @login_required
     def monitor_compare(user, target_id):
-        target = accessible_target(user, target_id)
-        if not target:
+        access = accessible_target(user, target_id)
+        if not access:
             return jsonify({"error": "监控不存在"}), 404
+        target, _subscription = access
         days = request.args.get("days", type=int)
         if days not in {1, 3, 7}:
             return jsonify({"error": "对比天数只支持 1、3、7"}), 400
         current = (
-            Snapshot.query.filter_by(target_id=target.id)
+            snapshot_query_for_user(user, target.id)
             .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
             .first()
         )
@@ -291,8 +372,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"days": days, "current": None, "baseline": None, "diff": None})
         cutoff = current.scanned_at - timedelta(days=days)
         baseline = (
-            Snapshot.query.filter(
-                Snapshot.target_id == target.id,
+            snapshot_query_for_user(user, target.id).filter(
                 Snapshot.scanned_at <= cutoff,
             )
             .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
@@ -319,13 +399,34 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             deleted = delete_monitor(user, target)
         except LookupError as exc:
             return jsonify({"error": str(exc)}), 404
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
         return jsonify({"ok": True, "target_deleted": deleted})
+
+    @app.patch("/api/monitors/<int:target_id>")
+    @login_required
+    def monitor_remark(user, target_id):
+        require_csrf()
+        if not state_allows_monitor_write(user):
+            return jsonify({"error": "当前账号处于只读状态，不能修改备注"}), 403
+        subscription = Subscription.query.filter_by(user_id=user.id, target_id=target_id).first()
+        if not subscription:
+            return jsonify({"error": "监控不存在"}), 404
+        remark = str((request.get_json(silent=True) or {}).get("remark") or "").strip()
+        if "\n" in remark or "\r" in remark:
+            return jsonify({"error": "备注不能包含换行"}), 400
+        if len(remark) > 50:
+            return jsonify({"error": "备注最多 50 个字符"}), 400
+        subscription.remark = remark or None
+        db.session.commit()
+        return jsonify({"monitor": monitor_public(subscription, user)})
 
     @app.get("/api/jobs/<int:job_id>")
     @login_required
     def job_status(user, job_id):
         job = db.session.get(ScanJob, job_id)
-        if not job or (user.role != "admin" and job.requested_by != user.id):
+        trial_job = bool(user.trial_experience and user.trial_experience.current_job_id == job_id)
+        if not job or (user.role != "admin" and job.requested_by != user.id and not trial_job):
             return jsonify({"error": "任务不存在"}), 404
         result = json.loads(job.result_json) if job.result_json else None
         return jsonify({"id": job.id, "status": job.status, "kind": job.kind, "result": result, "error": job.error})
@@ -362,8 +463,57 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             if len(password) < 8 or len(password) > 72:
                 return jsonify({"error": "重置密码长度必须为 8-72"}), 400
             set_user_password(user, password)
+        if "monitor_limit" in data:
+            if user.role == "admin" or user.account_kind == "internal":
+                return jsonify({"error": "管理员和内部账号固定为无限监控"}), 400
+            try:
+                monitor_limit = int(data["monitor_limit"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "监控限额必须为整数"}), 400
+            if monitor_limit < 0 or monitor_limit > 10000:
+                return jsonify({"error": "监控限额必须为 0-10000"}), 400
+            user.monitor_limit = monitor_limit
         db.session.commit()
         return jsonify({"user": user_json(user)})
+
+    @app.get("/api/admin/activation-codes")
+    @admin_required
+    def admin_activation_codes(_user):
+        page, pagination = canonical_pagination(
+            ActivationCode.query.order_by(ActivationCode.created_at.desc()),
+            per_page=20,
+        )
+        return jsonify({
+            "items": [activation_code_public(row) for row in pagination.items],
+            "page": page,
+            "pages": pagination.pages,
+            "total": pagination.total,
+        })
+
+    @app.post("/api/admin/activation-codes")
+    @admin_required
+    def admin_activation_code_create(admin):
+        require_csrf()
+        data = request.get_json(silent=True) or {}
+        try:
+            monitor_limit = int(data.get("monitor_limit"))
+            row, raw_code = create_activation_code(admin, str(data.get("plan") or ""), monitor_limit)
+        except (TypeError, ValueError) as exc:
+            return jsonify({"error": str(exc) or "邀请码参数无效"}), 400
+        return jsonify({"item": activation_code_public(row), "code": raw_code}), 201
+
+    @app.delete("/api/admin/activation-codes/<int:code_id>")
+    @admin_required
+    def admin_activation_code_revoke(_admin, code_id):
+        require_csrf()
+        row = db.session.get(ActivationCode, code_id)
+        if not row:
+            return jsonify({"error": "邀请码不存在"}), 404
+        try:
+            revoke_activation_code(row)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"ok": True, "item": activation_code_public(row)})
 
     @app.delete("/api/admin/users/<int:user_id>")
     @admin_required
@@ -426,6 +576,12 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             official = json.loads(official_raw) if official_raw else None
         except ValueError:
             official = None
+        users = User.query.all()
+        entitlement_counts: dict[str, int] = {}
+        for row in users:
+            status = entitlement_state(row)
+            key = row.plan or status
+            entitlement_counts[key] = entitlement_counts.get(key, 0) + 1
         return jsonify({
             "maintenance": maintenance_active(),
             "maintenance_message": state_get("maintenance_message", ""),
@@ -435,6 +591,12 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             "pending_jobs": running,
             "quota": quota_status(),
             "official_quota": official,
+            "entitlements": entitlement_counts,
+            "activation_codes": {
+                "unused": ActivationCode.query.filter_by(redeemed_at=None, revoked_at=None).count(),
+                "redeemed": ActivationCode.query.filter(ActivationCode.redeemed_at.is_not(None)).count(),
+                "revoked": ActivationCode.query.filter(ActivationCode.revoked_at.is_not(None)).count(),
+            },
             "localization": {
                 "mappings": ItemNameLocalization.query.count(),
                 "pending_jobs": LocalizationJob.query.filter(LocalizationJob.status.in_(["queued", "running"])).count(),

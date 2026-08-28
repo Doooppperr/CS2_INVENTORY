@@ -11,6 +11,16 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from .database import db
+from .entitlements import (
+    can_add_monitor,
+    cleanup_lifecycle,
+    ensure_trial_experience,
+    entitlement_state,
+    latest_accessible_snapshot,
+    lock_user,
+    protected_snapshot_ids,
+    state_allows_monitor_write,
+)
 from .localization import (
     canonicalize_unified,
     has_han,
@@ -131,6 +141,34 @@ def target_public(target: SteamTarget, *, include_latest: bool = True) -> dict:
     }
 
 
+def monitor_public(subscription: Subscription, user: User, *, include_latest: bool = True) -> dict:
+    target = subscription.target
+    snapshot = latest_accessible_snapshot(user, target.id)
+    state = entitlement_state(user)
+    frozen_view = state in {"grace", "trial_result"}
+    if subscription.remark:
+        label = (
+            f"{subscription.remark} -（{target.persona_name}）- {target.steamid}"
+            if target.persona_name
+            else f"{subscription.remark} - {target.steamid}"
+        )
+    else:
+        label = f"{target.persona_name} - {target.steamid}" if target.persona_name else target.steamid
+    return {
+        "id": target.id,
+        "steamid": target.steamid,
+        "persona_name": target.persona_name,
+        "remark": subscription.remark,
+        "label": label,
+        "scan_status": target.scan_status,
+        "last_scan_at": beijing_iso(snapshot.scanned_at if frozen_view and snapshot else target.last_scan_at),
+        "last_success_at": beijing_iso(snapshot.scanned_at if frozen_view and snapshot else target.last_success_at),
+        "last_error": target.last_error,
+        "latest": snapshot_public(snapshot, include_items=False) if include_latest and snapshot else None,
+        "subscriber_count": len(target.subscriptions),
+    }
+
+
 def queue_job(target: SteamTarget, *, kind: str, requested_by: int | None = None, batch_id: int | None = None) -> ScanJob:
     existing = ScanJob.query.filter(
         ScanJob.target_id == target.id,
@@ -156,7 +194,30 @@ def add_monitor(user: User, steamid: str) -> tuple[SteamTarget, ScanJob | None, 
     if not STEAMID_RE.fullmatch(steamid):
         raise ValueError("请输入有效的 SteamID64")
     user_id = user.id
+    lock_user(user_id)
+    db.session.refresh(user)
     target = SteamTarget.query.filter_by(steamid=steamid).first()
+    existing_subscription = (
+        Subscription.query.filter_by(user_id=user_id, target_id=target.id).first()
+        if target else None
+    )
+    if existing_subscription:
+        state = entitlement_state(user)
+        if state in {"grace", "expired", "trial_expired"}:
+            raise PermissionError("当前账号为只读或已过期，请先重新激活")
+        if user.account_kind == "trial" and state in {"trial_scanning", "trial_failed"}:
+            trial = ensure_trial_experience(user)
+            job = db.session.get(ScanJob, trial.current_job_id) if trial.current_job_id else None
+            if not job or job.status == "failed":
+                job = queue_job(target, kind="initial", requested_by=user_id)
+                db.session.flush()
+                trial.current_job_id = job.id
+                db.session.commit()
+                return target, job, False
+        return target, None, False
+    allowed, reason = can_add_monitor(user)
+    if not allowed:
+        raise OverflowError(reason or "当前账号不能添加监控")
     created = False
     if target is None:
         target = SteamTarget(steamid=steamid)
@@ -169,21 +230,37 @@ def add_monitor(user: User, steamid: str) -> tuple[SteamTarget, ScanJob | None, 
             target = SteamTarget.query.filter_by(steamid=steamid).first()
             if target is None:
                 raise
-    if Subscription.query.filter_by(user_id=user_id, target_id=target.id).first():
-        return target, None, False
     db.session.add(Subscription(user_id=user_id, target_id=target.id))
-    job = queue_job(target, kind="initial", requested_by=user_id) if created or not latest_snapshot(target.id) else None
+    if user.account_kind == "trial":
+        job = queue_job(target, kind="initial", requested_by=user_id)
+        db.session.flush()
+        trial = ensure_trial_experience(user)
+        trial.steamid = steamid
+        trial.current_target_id = target.id
+        trial.current_job_id = job.id
+    else:
+        job = queue_job(target, kind="initial", requested_by=user_id) if created or not latest_snapshot(target.id) else None
     db.session.commit()
     return target, job, created
 
 
 def delete_monitor(user: User, target: SteamTarget) -> bool:
+    lock_user(user.id)
+    db.session.refresh(user)
+    if not state_allows_monitor_write(user):
+        raise PermissionError("套餐到期宽限期为只读状态，不能删除监控")
     subscription = Subscription.query.filter_by(user_id=user.id, target_id=target.id).first()
     if not subscription and user.role != "admin":
         raise LookupError("监控不存在")
     if subscription:
         db.session.delete(subscription)
         db.session.flush()
+    if user.account_kind == "trial" and user.trial_experience:
+        trial = user.trial_experience
+        if not trial.completed_at and trial.current_target_id == target.id:
+            trial.steamid = None
+            trial.current_target_id = None
+            trial.current_job_id = None
     remaining = Subscription.query.filter_by(target_id=target.id).count()
     deleted_target = remaining == 0
     if deleted_target:
@@ -291,12 +368,17 @@ def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
 
 def prune_expired() -> dict:
     cutoff = utcnow() - timedelta(days=current_app.config["SNAPSHOT_RETENTION_DAYS"])
-    snapshots = Snapshot.query.filter(Snapshot.scanned_at < cutoff).all()
+    protected = protected_snapshot_ids()
+    query = Snapshot.query.filter(Snapshot.scanned_at < cutoff)
+    if protected:
+        query = query.filter(Snapshot.id.not_in(protected))
+    snapshots = query.all()
     expired_jobs = ScanJob.query.filter(ScanJob.expires_at.is_not(None), ScanJob.expires_at < utcnow()).all()
     for row in snapshots + expired_jobs:
         db.session.delete(row)
     db.session.commit()
-    return {"snapshots": len(snapshots), "jobs": len(expired_jobs)}
+    lifecycle = cleanup_lifecycle()
+    return {"snapshots": len(snapshots), "jobs": len(expired_jobs), "lifecycle": lifecycle}
 
 
 def billing_period_start(now: datetime | None = None) -> datetime:
