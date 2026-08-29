@@ -175,6 +175,31 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn('window.addEventListener("storage"', script)
         self.assertIn("localStorage.setItem", script)
 
+    def test_theme_loader_uses_deployment_prefix_and_marketing_copy_has_semantic_lines(self):
+        landing = self.client.get("/").get_data(as_text=True)
+        console = self.client.get("/app/monitors/999/").get_data(as_text=True)
+
+        for html in (landing, console):
+            self.assertIn("location.pathname.match(/^(.*\\/)app", html)
+            self.assertIn("script.src=`${base}static/theme.js`", html)
+            self.assertNotIn('src="/static/theme.js"', html)
+
+        self.assertIn(
+            '<span>导入 SteamID64 统一查看库存与历史变化</span>'
+            '<span>清晰记录交易保护资产 新增 移除和数量波动</span>',
+            landing,
+        )
+        self.assertIn('<p class="lead semantic-lines">', landing)
+        self.assertIn('<p id="trialNote" class="trial-note semantic-lines"', landing)
+        for old_copy in (
+            "导入 SteamID64，统一查看库存",
+            "流程清晰且无需反复操作。",
+            "三种套餐均包含完整功能，",
+            "我们会为你生成专属一次性邀请码。",
+            "注册成功，请登录",
+        ):
+            self.assertNotIn(old_copy, landing)
+
     def test_logged_in_landing_has_one_console_action_and_detail_back_url_has_no_slash_404(self):
         landing = self.client.get("/").get_data(as_text=True)
         self.assertNotIn('>获取套餐</a>', landing)
