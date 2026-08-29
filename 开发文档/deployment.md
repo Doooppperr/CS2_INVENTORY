@@ -7,6 +7,15 @@
 5. 验证 Web、Worker、Timer、IP 路径和 HealthDoc 服务。
 6. 对比服务器发布目录、GitHub `main` 和本地 commit SHA。
 
+# 三态主题发布验收（2026-08-29）
+
+1. 清空 `cs2-inventory-theme` 后分别以浅色、深色系统设置访问 `/`，确认首次渲染直接匹配系统且没有明显闪白。
+2. 分别选择浅色、深色并刷新；从 `/` 进入 `/app`、库存详情和管理员三个板块，确认选择保持一致且显式选择不随系统变化。
+3. 切换为跟随系统后改变系统主题，确认页面实时更新；同时打开两个同源标签页，确认偏好通过 `storage` 事件同步。
+4. 检查落地页、登录注册弹窗、监控列表、库存详情、用户管理、全部目标、备注/密码弹窗和 Toast 的文字对比度、焦点状态及 680px 移动布局。
+5. 发布后核对 `/health`、`/ready`、Web/Worker、每日 timer、清理 timer、外网 `/cs2_inventory/` 和 `/cs2_inventory/app`，并确认本地、GitHub 与 `/opt/cs2-inventory/current` 的 commit SHA 一致。
+6. 主题发布不包含数据库迁移；如需人工回滚，仍使用上一 release 与对应 `pre-deploy` 备份，回滚后额外执行并核对 `systemctl enable --now cs2-inventory-cleanup.timer`。
+
 # 权益与邀请码发布（2026-08-28）
 
 1. 上线前只读导出生产用户清单，确认当前既有账号范围；迁移会将执行时已经存在的账号回填为内部永久无限。

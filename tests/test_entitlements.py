@@ -127,7 +127,7 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn("一键完成库存追踪", landing)
         self.assertNotIn("一处完成库存追踪", landing)
         self.assertIn("--orange:#e9853d", landing)
-        self.assertIn("background-image:linear-gradient", landing)
+        self.assertIn("background-image:var(--scanlines)", landing)
 
         console = self.client.get("/app").get_data(as_text=True)
         self.assertIn('id="homeLink"', console)
@@ -138,9 +138,42 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn("Promise.all([api(`api/admin/users", console)
         self.assertLess(console.index('id="adminUsersPage"'), console.index('id="adminCodesPage"'))
         self.assertLess(console.index('id="adminCodesPage"'), console.index('id="adminTargetsPage"'))
-        self.assertIn("/* Warm retro console theme */", console)
+        self.assertNotIn("/* Warm retro console theme */", console)
+        self.assertIn(':root[data-theme="dark"]', console)
         self.assertIn("grid-template-columns:minmax(0,1fr) 76px", console)
         self.assertIn(".remark-edit{align-self:center;justify-self:center;margin:0", console)
+
+    def test_three_state_theme_is_shared_early_and_system_aware(self):
+        landing = self.client.get("/").get_data(as_text=True)
+        console = self.client.get("/app").get_data(as_text=True)
+        theme_response = self.client.get("/static/theme.js")
+
+        self.assertEqual(theme_response.status_code, 200)
+        script = theme_response.get_data(as_text=True)
+        theme_response.close()
+        for html in (landing, console):
+            self.assertIn("cs2-inventory-theme", html)
+            self.assertIn("data-theme-selector", html)
+            self.assertIn('<option value="system">跟随系统</option>', html)
+            self.assertIn('<option value="light">浅色</option>', html)
+            self.assertIn('<option value="dark">深色</option>', html)
+            self.assertIn("dataset.themePreference", html)
+            self.assertIn("prefers-color-scheme: dark", html)
+            self.assertIn(':root[data-theme="dark"]', html)
+            self.assertIn("#0b0814", html)
+            self.assertIn("#9b5cff", html)
+            self.assertIn("#2dd4bf", html)
+            self.assertLess(html.index("cs2-inventory-theme"), html.index("<style>"))
+            self.assertLess(html.index("<style>"), html.index("<body"))
+
+        self.assertEqual(landing.count("data-theme-selector"), 1)
+        self.assertEqual(console.count("data-theme-selector"), 2)
+        self.assertIn('const STORAGE_KEY = "cs2-inventory-theme"', script)
+        self.assertIn('new Set(["system", "light", "dark"])', script)
+        self.assertIn('window.matchMedia("(prefers-color-scheme: dark)")', script)
+        self.assertIn('root.dataset.themePreference === "system"', script)
+        self.assertIn('window.addEventListener("storage"', script)
+        self.assertIn("localStorage.setItem", script)
 
     def test_logged_in_landing_has_one_console_action_and_detail_back_url_has_no_slash_404(self):
         landing = self.client.get("/").get_data(as_text=True)
