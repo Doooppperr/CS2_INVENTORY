@@ -203,7 +203,7 @@ class EntitlementTests(unittest.TestCase):
     def test_public_landing_displays_locked_rmb_prices(self):
         landing = self.client.get("/").get_data(as_text=True)
 
-        self.assertIn("以下套餐价格均为人民币", landing)
+        self.assertNotIn("以下套餐价格均为人民币", landing)
         self.assertIn('<span class="price-currency">¥</span>328<span class="price-unit">/ 月</span>', landing)
         self.assertIn('<span class="price-currency">¥</span>2888<span class="price-unit">/ 年</span>', landing)
         self.assertIn('<span class="price-currency">¥</span>8888<span class="price-unit">/ 永久</span>', landing)
