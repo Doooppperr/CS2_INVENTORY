@@ -200,6 +200,15 @@ class EntitlementTests(unittest.TestCase):
         ):
             self.assertNotIn(old_copy, landing)
 
+    def test_public_landing_displays_locked_rmb_prices(self):
+        landing = self.client.get("/").get_data(as_text=True)
+
+        self.assertIn("以下套餐价格均为人民币", landing)
+        self.assertIn('<span class="price-currency">¥</span>328<span class="price-unit">/ 月</span>', landing)
+        self.assertIn('<span class="price-currency">¥</span>2888<span class="price-unit">/ 年</span>', landing)
+        self.assertIn('<span class="price-currency">¥</span>8888<span class="price-unit">/ 永久</span>', landing)
+        self.assertNotIn("具体价格暂不公开", landing)
+
     def test_logged_in_landing_has_one_console_action_and_detail_back_url_has_no_slash_404(self):
         landing = self.client.get("/").get_data(as_text=True)
         self.assertNotIn('>获取套餐</a>', landing)
