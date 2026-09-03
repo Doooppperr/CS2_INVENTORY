@@ -7,6 +7,8 @@
 5. 验证 Web、Worker、Timer、IP 路径和 HealthDoc 服务。
 6. 对比服务器发布目录、GitHub `main` 和本地 commit SHA。
 
+仓库通过 `.gitattributes` 强制发布脚本与 systemd 单元使用 LF，保证 Windows 工作区生成的 `git archive` 可在 Linux 服务器直接执行。
+
 # 管理员独占开户与试用退役发布验收（2026-09-03）
 
 1. 停止 Web、Worker、Schedule Timer 和 Cleanup Timer，使用 SQLite backup API 创建完整备份并执行 `PRAGMA integrity_check` 与 `PRAGMA foreign_key_check`。
