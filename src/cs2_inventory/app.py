@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from flask import Flask, jsonify, render_template, request, session
 from sqlalchemy import func, text
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
 from .auth import (
@@ -20,13 +21,13 @@ from .auth import (
 from .config import Config
 from .database import db
 from .entitlements import (
+    VALID_PLANS,
     activation_code_public,
+    add_natural_period,
     create_activation_code,
-    ensure_trial_experience,
     entitlement_public,
     entitlement_state,
     redeem_activation_code,
-    remove_expired_trial_username,
     revoke_activation_code,
     snapshot_query_for_user,
     state_allows_monitor_write,
@@ -167,30 +168,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
 
     @app.post("/api/auth/register")
     def register():
-        require_csrf()
-        blocked = ensure_mutation_allowed(None)
-        if blocked:
-            return blocked
-        ip = request.remote_addr or "unknown"
-        if rate_limited(f"register:{ip}", limit=5, window_seconds=3600):
-            return jsonify({"error": "注册过于频繁，请稍后重试"}), 429
-        data = request.get_json(silent=True) or {}
-        username = str(data.get("username") or "").strip()
-        password = str(data.get("password") or "")
-        if not USERNAME_RE.fullmatch(username):
-            return jsonify({"error": "用户名只能包含字母、数字和下划线，长度 3-32"}), 400
-        if len(password) < 8 or len(password) > 72:
-            return jsonify({"error": "密码长度必须为 8-72"}), 400
-        remove_expired_trial_username(username)
-        if User.query.filter(func.lower(User.username) == username.lower()).first():
-            return jsonify({"error": "用户名已存在"}), 409
-        user = User(username=username, password_hash="", role="user", account_kind="trial")
-        set_user_password(user, password)
-        db.session.add(user)
-        db.session.flush()
-        ensure_trial_experience(user)
-        db.session.commit()
-        return jsonify({"user": user_json(user)}), 201
+        return jsonify({"error": "账号仅由管理员创建"}), 403
 
     @app.post("/api/auth/login")
     def login():
@@ -271,7 +249,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             .filter(Subscription.user_id == user.id)
             .scalar()
         )
-        if user_state in {"grace", "trial_result"}:
+        if user_state == "grace":
             visible_times = [
                 row.scanned_at
                 for sub in user.subscriptions
@@ -425,8 +403,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @login_required
     def job_status(user, job_id):
         job = db.session.get(ScanJob, job_id)
-        trial_job = bool(user.trial_experience and user.trial_experience.current_job_id == job_id)
-        if not job or (user.role != "admin" and job.requested_by != user.id and not trial_job):
+        if not job or (user.role != "admin" and job.requested_by != user.id):
             return jsonify({"error": "任务不存在"}), 404
         result = json.loads(job.result_json) if job.result_json else None
         return jsonify({"id": job.id, "status": job.status, "kind": job.kind, "result": result, "error": job.error})
@@ -445,6 +422,58 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             data["password_changed_at"] = beijing_iso(row.password_changed_at)
             items.append(data)
         response = jsonify({"items": items, "page": page, "pages": pagination.pages, "total": pagination.total})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/api/admin/users")
+    @admin_required
+    def admin_user_create(_admin):
+        require_csrf()
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "请求内容必须为对象"}), 400
+        allowed = {"username", "password", "plan", "monitor_limit"}
+        if set(data) - allowed:
+            return jsonify({"error": "创建账户只允许用户名 密码 套餐和监控限额"}), 400
+        username = str(data.get("username") or "").strip()
+        password = str(data.get("password") or "")
+        plan = str(data.get("plan") or "").strip()
+        if not USERNAME_RE.fullmatch(username):
+            return jsonify({"error": "用户名只能包含字母 数字和下划线 长度 3-32"}), 400
+        if len(password) < 8 or len(password) > 72:
+            return jsonify({"error": "密码长度必须为 8-72"}), 400
+        if plan not in VALID_PLANS:
+            return jsonify({"error": "套餐必须为月度 年度或永久"}), 400
+        raw_monitor_limit = data.get("monitor_limit")
+        if isinstance(raw_monitor_limit, bool) or not isinstance(raw_monitor_limit, int):
+            return jsonify({"error": "监控限额必须为整数"}), 400
+        monitor_limit = raw_monitor_limit
+        if monitor_limit < 1 or monitor_limit > 10000:
+            return jsonify({"error": "创建账户监控限额必须为 1-10000"}), 400
+        normalized_username = username.lower()
+        if User.query.filter(func.lower(User.username) == normalized_username).first():
+            return jsonify({"error": "用户名已存在"}), 409
+        now = utcnow()
+        user = User(
+            username=normalized_username,
+            password_hash="",
+            role="user",
+            is_active=True,
+            account_kind="customer",
+            plan=plan,
+            activated_at=now,
+            activation_expires_at=None if plan == "permanent" else add_natural_period(now, plan),
+            monitor_limit=monitor_limit,
+        )
+        set_user_password(user, password)
+        db.session.add(user)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"error": "用户名已存在"}), 409
+        response = jsonify({"user": user_json(user)})
+        response.status_code = 201
         response.headers["Cache-Control"] = "no-store"
         return response
 

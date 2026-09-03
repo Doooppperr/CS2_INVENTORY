@@ -6,7 +6,7 @@ from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, update
+from sqlalchemy import update
 
 from .database import db
 from .models import (
@@ -15,14 +15,12 @@ from .models import (
     Snapshot,
     SteamTarget,
     Subscription,
-    TrialExperience,
     User,
     beijing_iso,
     utcnow,
 )
 
 BEIJING = ZoneInfo("Asia/Shanghai")
-TRIAL_LIFETIME = timedelta(days=7)
 GRACE_LIFETIME = timedelta(days=7)
 VALID_PLANS = {"monthly", "annual", "permanent"}
 
@@ -57,37 +55,12 @@ def lock_user(user_id: int) -> None:
     )
 
 
-def ensure_trial_experience(user: User, *, now: datetime | None = None) -> TrialExperience:
-    row = user.trial_experience
-    if row is None:
-        created = aware_utc(user.created_at) or aware_utc(now or utcnow())
-        row = TrialExperience(
-            user=user,
-            registration_expires_at=created + TRIAL_LIFETIME,
-        )
-        db.session.add(row)
-    return row
-
-
 def entitlement_state(user: User, *, now: datetime | None = None) -> str:
     now = aware_utc(now or utcnow())
     if user.role == "admin":
         return "admin"
     if user.account_kind == "internal":
         return "internal"
-    if user.account_kind == "trial":
-        trial = ensure_trial_experience(user, now=now)
-        deadline = aware_utc(trial.result_expires_at or trial.registration_expires_at)
-        if deadline and now >= deadline:
-            return "trial_expired"
-        if trial.completed_at:
-            return "trial_result"
-        if trial.current_job_id:
-            job = db.session.get(ScanJob, trial.current_job_id)
-            if job and job.status == "failed":
-                return "trial_failed"
-            return "trial_scanning"
-        return "trial_registered"
     if user.plan == "permanent":
         return "active_permanent"
     expires = aware_utc(user.activation_expires_at)
@@ -113,23 +86,16 @@ def can_add_monitor(user: User, *, now: datetime | None = None) -> tuple[bool, s
         if limit is not None and count >= limit:
             return False, f"已达到监控上限 {count}/{limit}"
         return True, None
-    if state == "trial_registered":
-        return True, None
-    if state in {"trial_scanning", "trial_failed"}:
-        return False, "体验账号同时只能导入一个 SteamID；请先删除当前目标后再重试"
-    if state == "trial_result":
-        return False, "首次扫描体验已经使用；删除监控不会返还体验机会"
     if state == "grace":
         return False, "套餐已到期，当前处于只读宽限期，请使用邀请码重新激活"
     if state == "expired":
         return False, "套餐已过期，请使用邀请码重新激活"
-    return False, "体验账号已到期，请重新注册"
+    return False, "当前账号不能添加监控"
 
 
 def entitlement_public(user: User, *, now: datetime | None = None) -> dict:
     now = aware_utc(now or utcnow())
     state = entitlement_state(user, now=now)
-    trial = user.trial_experience if user.account_kind == "trial" else None
     actual_count = Subscription.query.filter_by(user_id=user.id).count()
     visible_count = 0 if state == "expired" else actual_count
     can_add, reason = can_add_monitor(user, now=now)
@@ -145,15 +111,6 @@ def entitlement_public(user: User, *, now: datetime | None = None) -> dict:
         "can_add_monitor": can_add,
         "add_block_reason": reason,
     }
-    if trial:
-        data["trial"] = {
-            "steamid": trial.steamid,
-            "state": state,
-            "registration_expires_at": beijing_iso(trial.registration_expires_at),
-            "completed_at": beijing_iso(trial.completed_at),
-            "result_expires_at": beijing_iso(trial.result_expires_at),
-            "job_id": trial.current_job_id,
-        }
     return data
 
 
@@ -163,10 +120,6 @@ def state_allows_monitor_write(user: User, *, now: datetime | None = None) -> bo
         "internal",
         "active",
         "active_permanent",
-        "trial_registered",
-        "trial_scanning",
-        "trial_failed",
-        "trial_result",
     }
 
 
@@ -177,10 +130,6 @@ def snapshot_query_for_user(user: User, target_id: int):
         return query
     if state == "grace":
         return query.filter(Snapshot.scanned_at <= user.activation_expires_at)
-    if user.account_kind == "trial" and state == "trial_result":
-        trial = user.trial_experience
-        if trial and trial.result_snapshot_id:
-            return query.filter(Snapshot.id == trial.result_snapshot_id)
     return query.filter(Snapshot.id == -1)
 
 
@@ -213,35 +162,7 @@ def scan_job_eligible(job: ScanJob, *, now: datetime | None = None) -> bool:
     target = db.session.get(SteamTarget, job.target_id) if job.target_id else None
     if not target:
         return False
-    if target_daily_eligible(target, now=now):
-        return True
-    if job.kind == "initial":
-        for trial in TrialExperience.query.filter_by(current_job_id=job.id).all():
-            if trial.user and entitlement_state(trial.user, now=now) in {
-                "trial_scanning",
-                "trial_failed",
-            }:
-                return True
-    return False
-
-
-def complete_trial_for_job(job: ScanJob, snapshot: Snapshot) -> int:
-    now = aware_utc(snapshot.scanned_at or utcnow())
-    rows = TrialExperience.query.filter_by(current_job_id=job.id).all()
-    completed = 0
-    for trial in rows:
-        user = trial.user
-        if not user or user.account_kind != "trial" or trial.completed_at:
-            continue
-        if now >= aware_utc(trial.registration_expires_at):
-            continue
-        trial.steamid = job.steamid
-        trial.current_target_id = job.target_id
-        trial.result_snapshot_id = snapshot.id
-        trial.completed_at = now
-        trial.result_expires_at = now + TRIAL_LIFETIME
-        completed += 1
-    return completed
+    return target_daily_eligible(target, now=now)
 
 
 def code_digest(raw_code: str) -> str:
@@ -335,34 +256,9 @@ def revoke_activation_code(row: ActivationCode) -> None:
         db.session.commit()
 
 
-def remove_expired_trial_username(username: str) -> bool:
-    user = User.query.filter(func.lower(User.username) == username.lower()).first()
-    if not user or user.account_kind != "trial" or entitlement_state(user) != "trial_expired":
-        return False
-    _delete_trial_user(user)
-    db.session.commit()
-    return True
-
-
-def _delete_trial_user(user: User) -> int:
-    targets = list({sub.target for sub in user.subscriptions})
-    db.session.delete(user)
-    db.session.flush()
-    deleted_targets = 0
-    for target in targets:
-        if Subscription.query.filter_by(target_id=target.id).count() == 0:
-            db.session.delete(target)
-            deleted_targets += 1
-    return deleted_targets
-
-
 def protected_snapshot_ids(*, now: datetime | None = None) -> set[int]:
     now = aware_utc(now or utcnow())
-    result = {
-        row.result_snapshot_id
-        for row in TrialExperience.query.filter(TrialExperience.result_snapshot_id.is_not(None)).all()
-        if row.result_expires_at and now < aware_utc(row.result_expires_at)
-    }
+    result: set[int] = set()
     for user in User.query.filter_by(account_kind="customer").all():
         if entitlement_state(user, now=now) != "grace":
             continue
@@ -378,13 +274,6 @@ def protected_snapshot_ids(*, now: datetime | None = None) -> set[int]:
 
 def cleanup_lifecycle(*, now: datetime | None = None) -> dict:
     now = aware_utc(now or utcnow())
-    trial_users = User.query.filter_by(account_kind="trial").all()
-    deleted_trials = 0
-    deleted_targets = 0
-    for user in trial_users:
-        if entitlement_state(user, now=now) == "trial_expired":
-            deleted_targets += _delete_trial_user(user)
-            deleted_trials += 1
     purged_customers = 0
     removed_subscriptions = 0
     for user in User.query.filter_by(account_kind="customer").all():
@@ -393,8 +282,6 @@ def cleanup_lifecycle(*, now: datetime | None = None) -> dict:
             purged_customers += 1
     db.session.commit()
     return {
-        "deleted_trial_users": deleted_trials,
         "purged_customers": purged_customers,
         "removed_subscriptions": removed_subscriptions,
-        "deleted_orphan_targets": deleted_targets,
     }

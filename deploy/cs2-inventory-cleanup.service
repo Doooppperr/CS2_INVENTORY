@@ -1,5 +1,5 @@
 [Unit]
-Description=Clean expired CS2 Inventory trial and entitlement data
+Description=Clean expired CS2 Inventory entitlement data
 After=cs2-inventory-web.service
 
 [Service]

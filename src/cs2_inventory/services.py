@@ -14,7 +14,6 @@ from .database import db
 from .entitlements import (
     can_add_monitor,
     cleanup_lifecycle,
-    ensure_trial_experience,
     entitlement_state,
     latest_accessible_snapshot,
     lock_user,
@@ -145,7 +144,7 @@ def monitor_public(subscription: Subscription, user: User, *, include_latest: bo
     target = subscription.target
     snapshot = latest_accessible_snapshot(user, target.id)
     state = entitlement_state(user)
-    frozen_view = state in {"grace", "trial_result"}
+    frozen_view = state == "grace"
     if subscription.remark:
         label = (
             f"{subscription.remark} -（{target.persona_name}）- {target.steamid}"
@@ -203,17 +202,8 @@ def add_monitor(user: User, steamid: str) -> tuple[SteamTarget, ScanJob | None, 
     )
     if existing_subscription:
         state = entitlement_state(user)
-        if state in {"grace", "expired", "trial_expired"}:
+        if state in {"grace", "expired"}:
             raise PermissionError("当前账号为只读或已过期，请先重新激活")
-        if user.account_kind == "trial" and state in {"trial_scanning", "trial_failed"}:
-            trial = ensure_trial_experience(user)
-            job = db.session.get(ScanJob, trial.current_job_id) if trial.current_job_id else None
-            if not job or job.status == "failed":
-                job = queue_job(target, kind="initial", requested_by=user_id)
-                db.session.flush()
-                trial.current_job_id = job.id
-                db.session.commit()
-                return target, job, False
         return target, None, False
     allowed, reason = can_add_monitor(user)
     if not allowed:
@@ -231,15 +221,7 @@ def add_monitor(user: User, steamid: str) -> tuple[SteamTarget, ScanJob | None, 
             if target is None:
                 raise
     db.session.add(Subscription(user_id=user_id, target_id=target.id))
-    if user.account_kind == "trial":
-        job = queue_job(target, kind="initial", requested_by=user_id)
-        db.session.flush()
-        trial = ensure_trial_experience(user)
-        trial.steamid = steamid
-        trial.current_target_id = target.id
-        trial.current_job_id = job.id
-    else:
-        job = queue_job(target, kind="initial", requested_by=user_id) if created or not latest_snapshot(target.id) else None
+    job = queue_job(target, kind="initial", requested_by=user_id) if created or not latest_snapshot(target.id) else None
     db.session.commit()
     return target, job, created
 
@@ -255,12 +237,6 @@ def delete_monitor(user: User, target: SteamTarget) -> bool:
     if subscription:
         db.session.delete(subscription)
         db.session.flush()
-    if user.account_kind == "trial" and user.trial_experience:
-        trial = user.trial_experience
-        if not trial.completed_at and trial.current_target_id == target.id:
-            trial.steamid = None
-            trial.current_target_id = None
-            trial.current_job_id = None
     remaining = Subscription.query.filter_by(target_id=target.id).count()
     deleted_target = remaining == 0
     if deleted_target:

@@ -5,7 +5,7 @@
 - `cs2-inventory-web.service`：Gunicorn Web 服务。
 - `cs2-inventory-worker.service`：两个并发槽的扫描任务处理器。
 - `cs2-inventory-schedule.timer`：北京时间每天 18:00 建立扫描批次。
-- `cs2-inventory-cleanup.timer`：每 15 分钟删除到期体验账号并清理超过付费宽限期的监控数据。
+- `cs2-inventory-cleanup.timer`：每 15 分钟清理超过正式客户付费宽限期的监控数据。
 
 批次运行期间普通用户只读，管理员仍可管理。批次全部完成后 Worker 自动解除维护并清理七天前快照。
 
@@ -22,7 +22,7 @@ sudo -u cs2inventory env PYTHONPATH=/opt/cs2-inventory/current/src CS2_STATE_DIR
 
 发布使用 `deploy/release.sh`，失败时自动恢复旧软链接、部署前数据库和 systemd units；人工完整回滚使用 `deploy/rollback.sh <旧版本目录> <pre-deploy备份目录>`。
 
-生命周期截止均按精确时间执行。清理 timer 只负责物理删除，timer 延迟不会让体验或付费权益继续可用。每日队列和 Worker 会排除仅由体验、宽限或已过期账号持有的目标。
+生命周期截止均按精确时间执行。清理 timer 只负责物理删除，timer 延迟不会让付费权益继续可用。每日队列和 Worker 会排除仅由宽限或已过期账号持有的目标。
 
 账号删除、旧停用账号清理和旧预置目标清理均不可逆。若需恢复，停止 Web 与 Worker，恢复对应 `pre-deploy-<commit>/cs2_inventory.db`，再切回旧 release 并重启服务。`bootstrap_seed_version` 存在时，任何进程启动都不会再次播种账号或监控目标。
 # 名称补译运维（2026-08-16）

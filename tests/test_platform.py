@@ -128,7 +128,10 @@ class PlatformTests(unittest.TestCase):
 
     def test_admin_user_delete_preserves_shared_target_and_removes_exclusive_target(self):
         with self.app.app_context():
-            victim = User(username="victim", password_hash="hash", role="user")
+            victim = User(
+                username="victim", password_hash="hash", role="user",
+                account_kind="internal", plan="permanent",
+            )
             db.session.add(victim)
             db.session.commit()
             shared = SteamTarget.query.filter_by(steamid="76561198441561382").one()
@@ -159,16 +162,20 @@ class PlatformTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400, response.get_json())
 
-    def test_open_registration_and_login(self):
+    def test_public_registration_is_forbidden(self):
         token = self.csrf()
         response = self.client.post("/api/auth/register", json={"username": "new_user", "password": "long-pass-123"}, headers={"X-CSRF-Token": token})
-        self.assertEqual(response.status_code, 201)
-        response = self.client.post("/api/auth/login", json={"username": "new_user", "password": "long-pass-123"}, headers={"X-CSRF-Token": token})
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json(), {"error": "账号仅由管理员创建"})
+        with self.app.app_context():
+            self.assertIsNone(User.query.filter_by(username="new_user").first())
 
     def test_shared_target_is_deduplicated(self):
         with self.app.app_context():
-            second = User(username="second", password_hash="hash", role="user")
+            second = User(
+                username="second", password_hash="hash", role="user",
+                account_kind="internal", plan="permanent",
+            )
             db.session.add(second)
             db.session.commit()
             target, job, created = add_monitor(second, "76561198441561382")
@@ -198,7 +205,10 @@ class PlatformTests(unittest.TestCase):
             for index in range(18):
                 add_monitor(user, f"7656119{4000000000 + index:010d}")
             for index in range(19):
-                db.session.add(User(username=f"page_user_{index}", password_hash="hash", role="user"))
+                db.session.add(User(
+                    username=f"page_user_{index}", password_hash="hash", role="user",
+                    account_kind="internal", plan="permanent",
+                ))
             db.session.commit()
         self.login("cs2inventory_admin")
         targets = self.client.get("/api/admin/targets?page=999").get_json()

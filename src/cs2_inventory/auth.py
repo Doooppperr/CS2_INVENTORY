@@ -53,12 +53,6 @@ def current_user() -> User | None:
     if not user or not user.is_active:
         session.clear()
         return None
-    if user.account_kind == "trial":
-        from .entitlements import entitlement_state
-
-        if entitlement_state(user) == "trial_expired":
-            session.clear()
-            return None
     return user
 
 

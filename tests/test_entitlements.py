@@ -4,7 +4,6 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import mock
 
 from werkzeug.security import generate_password_hash
 
@@ -14,21 +13,9 @@ from cs2_inventory.entitlements import (
     add_natural_period,
     cleanup_lifecycle,
     create_activation_code,
-    entitlement_state,
 )
-from cs2_inventory.models import Snapshot, SteamTarget, Subscription, User, utcnow
+from cs2_inventory.models import Subscription, User, utcnow
 from cs2_inventory.services import add_monitor, store_snapshot
-from cs2_inventory.worker import process_job
-
-FAKE_INVENTORY = {
-    "steamid": "76561199000000901",
-    "protected_live": [],
-    "public": [{"name": "测试物品", "count": 1, "assetids": ["asset-1"], "sources": ["public"]}],
-    "coverage": {"status": "complete"},
-    "elapsed_ms": 12,
-    "errors": [],
-    "sources": {"inventory": {"requests": 1}},
-}
 
 
 class EntitlementTests(unittest.TestCase):
@@ -62,16 +49,7 @@ class EntitlementTests(unittest.TestCase):
     def csrf(self):
         return self.client.get("/api/bootstrap").get_json()["csrf_token"]
 
-    def register(self, username="trial_user"):
-        token = self.csrf()
-        response = self.client.post(
-            "/api/auth/register",
-            json={"username": username, "password": "trial-pass-123"},
-            headers={"X-CSRF-Token": token},
-        )
-        self.assertEqual(response.status_code, 201, response.get_json())
-
-    def login(self, username="trial_user", password="trial-pass-123"):
+    def login(self, username="cs2inventory_user", password="platform-test-password"):
         response = self.client.post(
             "/api/auth/login",
             json={"username": username, "password": password},
@@ -83,25 +61,42 @@ class EntitlementTests(unittest.TestCase):
     def admin_login(self):
         return self.login("cs2inventory_admin", "platform-test-password")
 
-    def test_registration_creates_seven_day_trial_and_public_landing(self):
-        self.register()
-        token = self.login()
-        bootstrap = self.client.get("/api/bootstrap").get_json()
-        entitlement = bootstrap["user"]["entitlement"]
-        self.assertEqual(entitlement["kind"], "trial")
-        self.assertEqual(entitlement["status"], "trial_registered")
-        self.assertTrue(entitlement["can_add_monitor"])
-        self.assertIsNotNone(entitlement["trial"]["registration_expires_at"])
-        self.assertEqual(self.client.get("/").status_code, 200)
-        self.assertIn("star0718@outlook.com", self.client.get("/").get_data(as_text=True))
-        self.assertEqual(self.client.get("/app").status_code, 200)
+    def admin_create(self, username, plan="monthly", monitor_limit=5, password="customer-pass-123"):
+        token = self.admin_login()
+        response = self.client.post(
+            "/api/admin/users",
+            json={
+                "username": username,
+                "password": password,
+                "plan": plan,
+                "monitor_limit": monitor_limit,
+            },
+            headers={"X-CSRF-Token": token},
+        )
+        self.assertEqual(response.status_code, 201, response.get_json())
         self.client.post("/api/auth/logout", headers={"X-CSRF-Token": token})
+        return response.get_json()
 
-    def test_landing_login_accepts_legacy_short_password_but_registration_requires_eight(self):
+    def test_public_registration_is_closed_without_side_effects(self):
+        before = self.client.get("/api/bootstrap").get_json()["csrf_token"]
+        with self.app.app_context():
+            user_count = User.query.count()
+        response = self.client.post(
+            "/api/auth/register",
+            json={"username": "new_user", "password": "long-pass-123"},
+            headers={"X-CSRF-Token": before},
+        )
+        self.assertEqual(response.status_code, 403, response.get_json())
+        self.assertEqual(response.get_json(), {"error": "账号仅由管理员创建"})
+        with self.app.app_context():
+            self.assertEqual(User.query.count(), user_count)
+            self.assertIsNone(User.query.filter_by(username="new_user").first())
+
+    def test_landing_login_accepts_legacy_short_password_and_has_no_registration(self):
         landing = self.client.get("/").get_data(as_text=True)
         self.assertIn('id="password" type="password" minlength="1"', landing)
-        self.assertIn("password.minLength=register?8:1", landing)
-        self.assertIn("password.autocomplete=register?'new-password':'current-password'", landing)
+        self.assertNotIn("registerTab", landing)
+        self.assertNotIn("api/auth/register", landing)
 
         with self.app.app_context():
             user = User.query.filter_by(username="cs2inventory_user").one()
@@ -114,16 +109,10 @@ class EntitlementTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.get_json())
 
-        register = self.client.post(
-            "/api/auth/register",
-            json={"username": "short_password", "password": "123456"},
-            headers={"X-CSRF-Token": self.csrf()},
-        )
-        self.assertEqual(register.status_code, 400, register.get_json())
-
     def test_warm_landing_and_three_part_admin_console_navigation(self):
         landing = self.client.get("/").get_data(as_text=True)
-        self.assertIn("开始免费体验", landing)
+        self.assertIn("登录进入平台", landing)
+        self.assertNotIn("免费体验", landing)
         self.assertIn("一键完成库存追踪", landing)
         self.assertNotIn("一处完成库存追踪", landing)
         self.assertIn("--orange:#e9853d", landing)
@@ -136,6 +125,9 @@ class EntitlementTests(unittest.TestCase):
         self.assertNotIn('id="adminCodesTab"', console)
         self.assertIn("['overview','users','targets']", console)
         self.assertIn("Promise.all([api(`api/admin/users", console)
+        self.assertIn('id="createUserForm"', console)
+        self.assertIn("api/admin/users',{method:'POST'", console)
+        self.assertNotIn('id="registerTab"', console)
         self.assertLess(console.index('id="adminUsersPage"'), console.index('id="adminCodesPage"'))
         self.assertLess(console.index('id="adminCodesPage"'), console.index('id="adminTargetsPage"'))
         self.assertNotIn("/* Warm retro console theme */", console)
@@ -190,7 +182,8 @@ class EntitlementTests(unittest.TestCase):
             landing,
         )
         self.assertIn('<p class="lead semantic-lines">', landing)
-        self.assertIn('<p id="trialNote" class="trial-note semantic-lines"', landing)
+        self.assertNotIn("trialNote", landing)
+        self.assertIn("管理员确认后提供登录账户", landing)
         for old_copy in (
             "导入 SteamID64，统一查看库存",
             "流程清晰且无需反复操作。",
@@ -200,14 +193,15 @@ class EntitlementTests(unittest.TestCase):
         ):
             self.assertNotIn(old_copy, landing)
 
-    def test_public_landing_displays_locked_rmb_prices(self):
+    def test_public_landing_displays_masked_rmb_prices(self):
         landing = self.client.get("/").get_data(as_text=True)
 
         self.assertNotIn("以下套餐价格均为人民币", landing)
-        self.assertIn('<span class="price-currency">¥</span>328<span class="price-unit">/ 月</span>', landing)
-        self.assertIn('<span class="price-currency">¥</span>2888<span class="price-unit">/ 年</span>', landing)
-        self.assertIn('<span class="price-currency">¥</span>8888<span class="price-unit">/ 永久</span>', landing)
-        self.assertNotIn("具体价格暂不公开", landing)
+        self.assertIn('<span class="price-currency">¥</span>3xx<span class="price-unit">/ 月</span>', landing)
+        self.assertIn('<span class="price-currency">¥</span>2xxx<span class="price-unit">/ 年</span>', landing)
+        self.assertIn('<span class="price-currency">¥</span>xxxx<span class="price-unit">/ 永久</span>', landing)
+        for exact_price in ("328", "2888", "8888"):
+            self.assertNotIn(exact_price, landing)
 
     def test_public_landing_places_usage_notice_between_features_and_plans(self):
         landing = self.client.get("/").get_data(as_text=True)
@@ -232,112 +226,98 @@ class EntitlementTests(unittest.TestCase):
         self.assertEqual(self.client.get("/app/").status_code, 200)
         self.assertEqual(self.client.get("/app/monitors/999/").status_code, 200)
 
-    def test_successful_trial_is_pinned_for_seven_days_and_cannot_reimport(self):
-        self.register()
+    def test_admin_create_requires_admin_and_csrf(self):
+        payload = {
+            "username": "customer_one",
+            "password": "customer-pass-123",
+            "plan": "monthly",
+            "monitor_limit": 5,
+        }
+        self.assertEqual(self.client.post("/api/admin/users", json=payload).status_code, 401)
         token = self.login()
-        added = self.client.post(
-            "/api/monitors",
-            json={"steamid": "76561199000000901"},
-            headers={"X-CSRF-Token": token},
+        response = self.client.post(
+            "/api/admin/users", json=payload, headers={"X-CSRF-Token": token}
         )
-        self.assertEqual(added.status_code, 201, added.get_json())
-        job_id = added.get_json()["job_id"]
-        with self.app.app_context(), mock.patch(
-            "cs2_inventory.worker.run_max_coverage_query", return_value=FAKE_INVENTORY
-        ), mock.patch("cs2_inventory.worker.fetch_persona_name", return_value="Trial Steam"):
-            process_job(job_id)
-            user = User.query.filter_by(username="trial_user").one()
-            self.assertEqual(entitlement_state(user), "trial_result")
-            result_snapshot_id = user.trial_experience.result_snapshot_id
-            target = SteamTarget.query.filter_by(steamid="76561199000000901").one()
-            store_snapshot(target, {
-                "total_items": 2,
-                "item_types": 1,
-                "coverage": "ok",
-                "elapsed_ms": 1,
-                "errors": [],
-                "_assets": [{"asset_key": "newer", "name": "后续物品", "amount": 2, "sources": []}],
-            })
-            db.session.commit()
-            self.assertNotEqual(Snapshot.query.order_by(Snapshot.id.desc()).first().id, result_snapshot_id)
+        self.assertEqual(response.status_code, 403, response.get_json())
 
-        listing = self.client.get("/api/monitors").get_json()
-        self.assertEqual(listing["items"][0]["latest"]["total_items"], 1)
-        target_id = listing["items"][0]["id"]
-        response = self.client.patch(
-            f"/api/monitors/{target_id}",
-            json={"remark": "我的主号"},
-            headers={"X-CSRF-Token": token},
-        )
-        self.assertEqual(response.status_code, 200, response.get_json())
-        self.assertEqual(response.get_json()["monitor"]["label"], "我的主号 -（Trial Steam）- 76561199000000901")
-        second = self.client.post(
-            "/api/monitors",
-            json={"steamid": "76561199000000902"},
-            headers={"X-CSRF-Token": token},
-        )
-        self.assertEqual(second.status_code, 409, second.get_json())
-        self.assertEqual(self.client.delete(f"/api/monitors/{target_id}", headers={"X-CSRF-Token": token}).status_code, 200)
-        again = self.client.post(
-            "/api/monitors",
-            json={"steamid": "76561199000000902"},
-            headers={"X-CSRF-Token": token},
-        )
-        self.assertEqual(again.status_code, 409, again.get_json())
-
-    def test_failed_trial_can_delete_and_switch_target(self):
-        self.register()
-        token = self.login()
-        first = self.client.post(
-            "/api/monitors",
-            json={"steamid": "76561199000000911"},
-            headers={"X-CSRF-Token": token},
-        ).get_json()
+    def test_admin_creates_all_customer_plans_without_changing_existing_passwords(self):
         with self.app.app_context():
-            user = User.query.filter_by(username="trial_user").one()
-            from cs2_inventory.models import ScanJob
+            before = {
+                user.username: (user.password_hash, user.password_ciphertext)
+                for user in User.query.order_by(User.id).all()
+            }
+        token = self.admin_login()
+        created = {}
+        for plan, monitor_limit in (("monthly", 3), ("annual", 8), ("permanent", 13)):
+            response = self.client.post(
+                "/api/admin/users",
+                json={
+                    "username": f"customer_{plan}",
+                    "password": f"{plan}-customer-pass",
+                    "plan": plan,
+                    "monitor_limit": monitor_limit,
+                },
+                headers={"X-CSRF-Token": token},
+            )
+            self.assertEqual(response.status_code, 201, response.get_json())
+            created[plan] = response.get_json()["user"]
+            self.assertEqual(created[plan]["role"], "user")
+            self.assertEqual(created[plan]["entitlement"]["kind"], "customer")
+            self.assertEqual(created[plan]["entitlement"]["plan"], plan)
+            self.assertEqual(created[plan]["entitlement"]["monitor_limit"], monitor_limit)
+        self.assertIsNotNone(created["monthly"]["entitlement"]["expires_at"])
+        self.assertIsNotNone(created["annual"]["entitlement"]["expires_at"])
+        self.assertIsNone(created["permanent"]["entitlement"]["expires_at"])
+        self.client.post("/api/auth/logout", headers={"X-CSRF-Token": token})
+        self.login("customer_monthly", "monthly-customer-pass")
+        with self.app.app_context():
+            after = {
+                user.username: (user.password_hash, user.password_ciphertext)
+                for user in User.query.filter(User.username.in_(before)).all()
+            }
+            self.assertEqual(after, before)
 
-            job = db.session.get(ScanJob, first["job_id"])
-            job.status = "failed"
-            job.error = "private inventory"
-            db.session.commit()
-            target_id = user.trial_experience.current_target_id
-        self.assertEqual(self.client.delete(f"/api/monitors/{target_id}", headers={"X-CSRF-Token": token}).status_code, 200)
-        second = self.client.post(
-            "/api/monitors",
-            json={"steamid": "76561199000000912"},
+    def test_admin_create_validates_fields_and_case_insensitive_uniqueness(self):
+        token = self.admin_login()
+        valid = {
+            "username": "validation_user",
+            "password": "customer-pass-123",
+            "plan": "monthly",
+            "monitor_limit": 5,
+        }
+        invalid = (
+            {**valid, "username": "x"},
+            {**valid, "password": "short"},
+            {**valid, "plan": "trial"},
+            {**valid, "monitor_limit": 0},
+            {**valid, "monitor_limit": 10001},
+            {**valid, "monitor_limit": True},
+            {**valid, "monitor_limit": 1.5},
+            {**valid, "role": "admin"},
+            {**valid, "account_kind": "internal"},
+        )
+        for payload in invalid:
+            response = self.client.post(
+                "/api/admin/users", json=payload, headers={"X-CSRF-Token": token}
+            )
+            self.assertEqual(response.status_code, 400, (payload, response.get_json()))
+        created = self.client.post(
+            "/api/admin/users", json=valid, headers={"X-CSRF-Token": token}
+        )
+        self.assertEqual(created.status_code, 201, created.get_json())
+        duplicate = self.client.post(
+            "/api/admin/users",
+            json={**valid, "username": "VALIDATION_USER"},
             headers={"X-CSRF-Token": token},
         )
-        self.assertEqual(second.status_code, 201, second.get_json())
-
-    def test_expired_trial_deletes_account_and_allows_same_username_again(self):
-        self.register()
-        token = self.login()
-        added = self.client.post(
-            "/api/monitors",
-            json={"steamid": "76561199000000915"},
-            headers={"X-CSRF-Token": token},
-        ).get_json()
-        fake = {**FAKE_INVENTORY, "steamid": "76561199000000915"}
-        with self.app.app_context(), mock.patch(
-            "cs2_inventory.worker.run_max_coverage_query", return_value=fake
-        ), mock.patch("cs2_inventory.worker.fetch_persona_name", return_value="Expired Trial"):
-            process_job(added["job_id"])
-            user = User.query.filter_by(username="trial_user").one()
-            user.trial_experience.result_expires_at = utcnow() - timedelta(seconds=1)
-            db.session.commit()
-            result = cleanup_lifecycle()
-            self.assertEqual(result["deleted_trial_users"], 1)
-            self.assertIsNone(User.query.filter_by(username="trial_user").first())
-            self.assertIsNone(SteamTarget.query.filter_by(steamid="76561199000000915").first())
-        self.register()
+        self.assertEqual(duplicate.status_code, 409, duplicate.get_json())
 
     def test_invitation_redemption_and_monitor_limit(self):
-        self.register()
+        self.admin_create("customer_invite", plan="monthly", monitor_limit=1)
         with self.app.app_context():
             admin = User.query.filter_by(username="cs2inventory_admin").one()
             _row, code = create_activation_code(admin, "monthly", 1)
-        token = self.login()
+        token = self.login("customer_invite", "customer-pass-123")
         redeemed = self.client.post(
             "/api/activation/redeem",
             json={"code": code},

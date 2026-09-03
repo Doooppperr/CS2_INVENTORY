@@ -14,7 +14,7 @@ from flask import current_app
 from . import inventory_engine
 from .app import create_app
 from .database import db
-from .entitlements import complete_trial_for_job, scan_job_eligible
+from .entitlements import scan_job_eligible
 from .inventory_engine import run_max_coverage_query
 from .localization import process_localization_job
 from .models import (
@@ -247,8 +247,7 @@ def process_job(job_id: int) -> None:
             ):
                 target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
                 target.profile_updated_at = utcnow()
-            snapshot = store_snapshot(target, unified)
-            complete_trial_for_job(job, snapshot)
+            store_snapshot(target, unified)
             job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
         else:
             job.result_json = json.dumps(

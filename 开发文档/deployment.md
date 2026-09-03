@@ -7,6 +7,17 @@
 5. 验证 Web、Worker、Timer、IP 路径和 HealthDoc 服务。
 6. 对比服务器发布目录、GitHub `main` 和本地 commit SHA。
 
+# 管理员独占开户与试用退役发布验收（2026-09-03）
+
+1. 停止 Web、Worker、Schedule Timer 和 Cleanup Timer，使用 SQLite backup API 创建完整备份并执行 `PRAGMA integrity_check` 与 `PRAGMA foreign_key_check`。
+2. 发布前执行只读审计，确认 `account_kind=trial` 与 `trial_experiences` 记录均为 0，并记录用户、密码摘要、订阅、目标、快照和邀请码的计数与内容摘要；任一试用断言失败即中止发布并恢复服务。
+3. 推送 GitHub `main` 后按完整 commit SHA 生成归档，执行 `deploy/release.sh <archive> <commit>`；迁移 `20260903_08` 会再次执行试用零记录断言后删除试用表。
+4. 发布后确认公开注册返回 403 且用户数不变，管理员能创建并登录月度、年度、永久客户，普通用户不能调用管理员开户接口，既有内部账户密码摘要和权益未改变。
+5. 访问 `/`，确认没有注册、免费体验和试用文案，只显示 `¥3xx / 月`、`¥2xxx / 年`、`¥xxxx / 永久`，页面源码也不包含完整金额。
+6. 验证邀请码续期、重新激活、升级永久和撤销，确认永久客户不显示兑换区域；核对 `/health`、`/ready` 及四个 systemd 单元均为 `active`，两个 Timer 均为 `enabled`。
+7. 核对生产数据库不存在 `trial_experiences` 和 `account_kind=trial`，服务器 `current`、GitHub `main` 与本地完整 commit SHA 一致。
+8. 验收失败时执行 `deploy/rollback.sh <旧版本目录> <pre-deploy备份目录>`，恢复上一 release 和数据库备份，并额外执行 `systemctl enable --now cs2-inventory-cleanup.timer` 后复核两个 Timer。
+
 # 使用须知发布验收（2026-08-30）
 
 1. 访问 `/` 并确认“使用须知”位于“一键完成库存追踪”和“选择激活方式”之间。
@@ -15,7 +26,7 @@
 
 # 公开套餐价格发布验收（2026-08-30）
 
-1. 访问 `/` 并确认月度、年度、永久套餐依次显示 `¥328 / 月`、`¥2888 / 年`、`¥8888 / 永久`。
+1. 访问 `/` 并确认月度、年度、永久套餐依次显示 `¥3xx / 月`、`¥2xxx / 年`、`¥xxxx / 永久`。
 2. 浅色和深色模式下确认货币符号、金额、周期单位与卡片背景对比清晰，三张卡片在桌面端对齐且移动端不发生横向溢出。
 3. 确认价格直接显示在三张套餐卡片中，套餐区说明不再出现币种提示和“具体价格暂不公开”。
 
@@ -24,7 +35,7 @@
 1. 清空 `cs2-inventory-theme` 后分别以浅色、深色系统设置访问 `/`，确认首次渲染直接匹配系统且没有明显闪白。
 2. 分别选择浅色、深色并刷新；从 `/` 进入 `/app`、库存详情和管理员三个板块，确认选择保持一致且显式选择不随系统变化；生产环境额外确认共享脚本从 `/cs2_inventory/static/theme.js` 返回 200，而不是请求根路径 `/static/theme.js`。
 3. 切换为跟随系统后改变系统主题，确认页面实时更新；同时打开两个同源标签页，确认偏好通过 `storage` 事件同步。
-4. 检查落地页、登录注册弹窗、监控列表、库存详情、用户管理、全部目标、备注/密码弹窗和 Toast 的文字对比度、焦点状态及 680px 移动布局。
+4. 检查落地页、登录弹窗、监控列表、库存详情、用户管理、全部目标、备注/密码弹窗和 Toast 的文字对比度、焦点状态及 680px 移动布局。
 5. 发布后核对 `/health`、`/ready`、Web/Worker、每日 timer、清理 timer、外网 `/cs2_inventory/` 和 `/cs2_inventory/app`，并确认本地、GitHub 与 `/opt/cs2-inventory/current` 的 commit SHA 一致。
 6. 主题发布不包含数据库迁移；如需人工回滚，仍使用上一 release 与对应 `pre-deploy` 备份，回滚后额外执行并核对 `systemctl enable --now cs2-inventory-cleanup.timer`。
 

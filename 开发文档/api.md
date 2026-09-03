@@ -2,14 +2,16 @@
 
 所有修改请求携带 `X-CSRF-Token`，登录态使用 HttpOnly、SameSite=Lax Cookie。
 
-- `POST api/auth/register|login|logout|password`
-- `POST api/activation/redeem`：登录用户原子兑换一次性邀请码。
+- `POST api/auth/register`：公开注册拒绝桩，始终返回 `403 {"error":"账号仅由管理员创建"}` 且不查询或创建用户。
+- `POST api/auth/login|logout|password`：登录、退出与当前用户改密。
+- `POST api/activation/redeem`：客户原子兑换一次性邀请码以续期、重新激活或升级。
 - `GET|POST api/monitors`：每页固定 20 条及添加监控。
 - `GET|PATCH|DELETE api/monitors/<id>`：统一库存详情、私有备注及取消订阅。
 - `GET api/monitors/<id>/snapshots/<snapshot_id>`：快照与新增、移除、数量变化。
 - `GET api/monitors/<id>/compare?days=1|3|7`：最新快照与指定天数前基准快照的差异。
 - `GET api/jobs/<id>`：后台任务状态。
 - `GET api/admin/users|targets|status`：管理员用户、目标与概览数据；分页越界时返回最后一个有效页。
+- `POST api/admin/users`：仅管理员在 CSRF 保护下创建普通客户；请求字段为 `username`、`password`、`plan`、`monitor_limit`，成功返回 201 并立即可登录。
 - `PATCH api/admin/users/<id>`：重置密码或调整正式客户监控限额，不接受账号停用状态。
 - `GET|POST api/admin/activation-codes`：分页列出邀请码或生成一次性邀请码；列表不返回摘要和完整码。
 - `DELETE api/admin/activation-codes/<id>`：撤销尚未兑换的邀请码。
@@ -27,7 +29,7 @@
 
 管理员状态接口的 `localization` 对象包含 `mappings`、`pending_jobs`、`pending_items` 和 `failed_jobs`，用于观测名称映射和补译队列。
 
-`GET api/bootstrap` 的 `user.entitlement` 与 `GET api/monitors` 的 `entitlement` 返回账号类别、套餐、派生状态、到期/宽限时间、监控用量/限额、是否允许新增及体验截止。体验固定快照和付费宽限截止由所有详情、历史、显式快照与对比接口一致执行。
+`GET api/bootstrap` 的 `user.entitlement` 与 `GET api/monitors` 的 `entitlement` 返回账号类别、套餐、派生状态、到期/宽限时间、监控用量/限额及是否允许新增。付费宽限截止由所有详情、历史、显式快照与对比接口一致执行。
 
 用户监控元素增加 `remark`，`label` 的有备注格式为 `备注名 -（Steam名）- SteamID64`；管理员全局目标接口继续返回不含用户备注的全局标签。
 
