@@ -1,8 +1,8 @@
 [Unit]
-Description=Daily CS2 inventory snapshot at 18:00 Asia/Shanghai
+Description=Daily CS2 inventory snapshot at 07:30 Asia/Shanghai
 
 [Timer]
-OnCalendar=*-*-* 18:00:00 Asia/Shanghai
+OnCalendar=*-*-* 07:30:00 Asia/Shanghai
 Persistent=true
 AccuracySec=1min
 Unit=cs2-inventory-schedule.service

@@ -4,7 +4,7 @@
 
 - `cs2-inventory-web.service`：Gunicorn Web 服务。
 - `cs2-inventory-worker.service`：两个并发槽的扫描任务处理器。
-- `cs2-inventory-schedule.timer`：北京时间每天 18:00 建立扫描批次。
+- `cs2-inventory-schedule.timer`：北京时间每天 07:30 建立扫描批次。
 - `cs2-inventory-cleanup.timer`：每 15 分钟清理超过正式客户付费宽限期的监控数据。
 
 批次运行期间普通用户只读，管理员仍可管理。批次全部完成后 Worker 自动解除维护并清理七天前快照。
