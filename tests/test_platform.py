@@ -608,6 +608,22 @@ class PlatformTests(unittest.TestCase):
         self.assertIn("method:'DELETE'", html)
         self.assertNotIn("user-toggle", html)
 
+    def test_pixel_art_elements_render_on_landing_and_app(self):
+        landing = self.client.get("/")
+        self.assertEqual(landing.status_code, 200)
+        landing_html = landing.get_data(as_text=True)
+        self.assertIn("pixel-operator", landing_html)
+        self.assertIn("pixel-loadout", landing_html)
+        self.assertEqual(landing_html.count('class="pixel-svg pixel-feature"'), 3)
+        self.assertIn('shape-rendering="crispEdges"', landing_html)
+        self.assertIn("OPERATOR // 01", landing_html)
+
+        app = self.client.get("/app")
+        self.assertEqual(app.status_code, 200)
+        app_html = app.get_data(as_text=True)
+        self.assertEqual(app_html.count('<span class="app-brand-mark">'), 2)
+        self.assertIn("pixel-emblem", app_html)
+
     def test_admin_can_open_any_target_snapshot_from_global_list(self):
         with self.app.app_context():
             admin = User.query.filter_by(username="cs2inventory_admin").one()
