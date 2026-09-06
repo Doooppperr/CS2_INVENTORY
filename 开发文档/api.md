@@ -8,7 +8,7 @@
 - `GET|POST api/monitors`：每页固定 20 条及添加监控。
 - `GET|PATCH|DELETE api/monitors/<id>`：统一库存详情、私有备注及取消订阅。
 - `GET api/monitors/<id>/snapshots/<snapshot_id>`：快照与新增、移除、数量变化。
-- `GET api/monitors/<id>/compare?days=1|3|7`：最新快照与指定天数前基准快照的差异。
+- `GET api/monitors/<id>/compare?days=1|3|7`：最新快照与北京时间目标自然日最后一张快照的差异；目标日缺失时不向更早日期回退。
 - `GET api/jobs/<id>`：后台任务状态。
 - `GET api/admin/users|targets|status`：管理员用户、目标与概览数据；分页越界时返回最后一个有效页。
 - `POST api/admin/users`：仅管理员在 CSRF 保护下创建普通客户；请求字段为 `username`、`password`、`plan`、`monitor_limit`，成功返回 201 并立即可登录。
@@ -33,7 +33,9 @@
 
 用户监控元素增加 `remark`，`label` 的有备注格式为 `备注名 -（Steam名）- SteamID64`；管理员全局目标接口继续返回不含用户备注的全局标签。
 
-`GET api/monitors` 返回 `platform_targets`、`platform_limit` 和 `platform_limit_enforced=false`；`GET api/admin/status` 返回 `targets`、`target_limit` 和 `target_limit_enforced=false`。其中 35 仅为控制台参考值。`quota.daily_budget_enforced=false` 表示每日额度只统计并允许超过；`quota.billing_budget_enforced=true` 表示账期预算仍由 Worker 执行。
+`GET api/monitors` 返回 `platform_targets`、`platform_limit` 和 `platform_limit_enforced=false`；`GET api/admin/status` 返回 `targets`、`target_limit` 和 `target_limit_enforced=false`。其中 80 仅为控制台参考值。`quota` 增加 `billing_remaining`、`warning_level`、`warning_reserve`、`critical_reserve`、`estimated_credits_per_scan` 和 `scheduled_scans_per_day`；每日及账期 `*_enforced` 均为 `false`，表示额度仅预警、不停止任务。
+
+自然日对比响应增加 `requested_baseline_date` 与固定值 `baseline_selection=beijing_calendar_day_latest`。查询范围按北京时间目标日期的 `[00:00, 次日 00:00)` 转换为 UTC，存在多张快照时按扫描时间和 ID 倒序选择。
 
 # 账号与分页约定（2026-08-19）
 

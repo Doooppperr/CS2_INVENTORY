@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, time, timedelta, timezone
 
 from flask import Flask, jsonify, render_template, request, session
 from sqlalchemy import func, text
@@ -33,6 +33,7 @@ from .entitlements import (
     state_allows_monitor_write,
 )
 from .models import (
+    BEIJING_TIMEZONE,
     ActivationCode,
     ItemNameLocalization,
     LocalizationJob,
@@ -347,17 +348,33 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             .first()
         )
         if not current:
-            return jsonify({"days": days, "current": None, "baseline": None, "diff": None})
-        cutoff = current.scanned_at - timedelta(days=days)
+            return jsonify({
+                "days": days,
+                "requested_baseline_date": None,
+                "baseline_selection": "beijing_calendar_day_latest",
+                "current": None,
+                "baseline": None,
+                "diff": None,
+            })
+        current_time = current.scanned_at
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        target_date = current_time.astimezone(BEIJING_TIMEZONE).date() - timedelta(days=days)
+        local_start = datetime.combine(target_date, time.min, tzinfo=BEIJING_TIMEZONE)
+        utc_start = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+        utc_end = (local_start + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None)
         baseline = (
             snapshot_query_for_user(user, target.id).filter(
-                Snapshot.scanned_at <= cutoff,
+                Snapshot.scanned_at >= utc_start,
+                Snapshot.scanned_at < utc_end,
             )
             .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
             .first()
         )
         return jsonify({
             "days": days,
+            "requested_baseline_date": target_date.isoformat(),
+            "baseline_selection": "beijing_calendar_day_latest",
             "current": snapshot_public(current),
             "baseline": snapshot_public(baseline, include_items=False) if baseline else None,
             "diff": snapshot_diff(current, baseline) if baseline else None,

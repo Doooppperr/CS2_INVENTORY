@@ -149,6 +149,7 @@ class ScanBatch(db.Model):
     __tablename__ = "scan_batches"
     id = db.Column(db.Integer, primary_key=True)
     kind = db.Column(db.String(24), nullable=False, default="daily")
+    slot_key = db.Column(db.String(32), unique=True, index=True)
     status = db.Column(db.String(24), nullable=False, default="queued")
     total_jobs = db.Column(db.Integer, nullable=False, default=0)
     completed_jobs = db.Column(db.Integer, nullable=False, default=0)

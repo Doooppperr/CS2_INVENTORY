@@ -11,7 +11,7 @@ from sqlalchemy import text
 from werkzeug.security import generate_password_hash
 
 from cs2_inventory.app import bootstrap_data, create_app
-from cs2_inventory.cli import enqueue_daily
+from cs2_inventory.cli import enqueue_daily, scheduled_slot_key
 from cs2_inventory.database import db
 from cs2_inventory.localization import repair_retained_snapshots
 from cs2_inventory.models import (
@@ -40,6 +40,8 @@ from cs2_inventory.services import (
 )
 from cs2_inventory.unified import unify_inventory
 from cs2_inventory.worker import (
+    estimate_inventory_credits,
+    finish_batch,
     process_job,
     profile_refresh_due,
     recover_interrupted_jobs,
@@ -233,9 +235,9 @@ class PlatformTests(unittest.TestCase):
     def test_platform_reference_count_can_be_exceeded(self):
         with self.app.app_context():
             user = User.query.filter_by(username="cs2inventory_user").one()
-            for index in range(34):
+            for index in range(78):
                 add_monitor(user, f"7656119{2000000000 + index:010d}")
-            self.assertEqual(SteamTarget.query.count(), 37)
+            self.assertEqual(SteamTarget.query.count(), 81)
             trigger = db.session.execute(text(
                 "SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_steam_target_capacity'"
             )).first()
@@ -243,20 +245,39 @@ class PlatformTests(unittest.TestCase):
 
         token = self.login("cs2inventory_admin")
         status = self.client.get("/api/admin/status", headers={"X-CSRF-Token": token}).get_json()
-        self.assertEqual(status["targets"], 37)
-        self.assertEqual(status["target_limit"], 35)
+        self.assertEqual(status["targets"], 81)
+        self.assertEqual(status["target_limit"], 80)
         self.assertFalse(status["target_limit_enforced"])
 
     def test_daily_budget_is_observability_only(self):
         with self.app.app_context():
-            db.session.add(QuotaUsage(endpoint="inventory", credits=301, source="test"))
+            db.session.add(QuotaUsage(endpoint="inventory", credits=120001, source="test"))
             db.session.commit()
             status = quota_status()
-            self.assertEqual(status["daily_used"], 301)
-            self.assertEqual(status["daily_budget"], 300)
+            self.assertEqual(status["daily_used"], 120001)
+            self.assertEqual(status["daily_budget"], 5000)
             self.assertFalse(status["daily_budget_enforced"])
-            self.assertTrue(status["billing_budget_enforced"])
+            self.assertFalse(status["billing_budget_enforced"])
+            self.assertEqual(status["billing_remaining"], 29999)
+            self.assertEqual(status["warning_level"], "warning")
             self.assertTrue(quota_allows_scan())
+            db.session.add(QuotaUsage(endpoint="inventory", credits=15000, source="test"))
+            db.session.commit()
+            status = quota_status()
+            self.assertEqual(status["billing_remaining"], 14999)
+            self.assertEqual(status["warning_level"], "critical")
+            self.assertTrue(quota_allows_scan())
+
+    def test_inventory_credit_estimate_counts_only_provider_attempts(self):
+        with self.app.app_context():
+            result = {
+                "sources": {
+                    "steam_public_contextid2": {"requests": 1},
+                    "steamwebapi:parse=0:mode=0": {"requests": 1, "provider_requests": 2},
+                    "steamwebapi:parse=0:mode=2": {"requests": 3, "provider_requests": 4},
+                }
+            }
+            self.assertEqual(estimate_inventory_credits(result), 18)
 
     def test_maintenance_blocks_user_but_admin_can_add(self):
         user_token = self.login()
@@ -412,11 +433,16 @@ class PlatformTests(unittest.TestCase):
     def test_compare_endpoint_supports_latest_to_one_three_and_seven_day_baselines(self):
         with self.app.app_context():
             target = SteamTarget.query.first()
-            baseline = store_snapshot(target, {
+            morning = store_snapshot(target, {
                 "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1,
                 "errors": [], "_assets": [{"asset_key": "old", "name": "Old", "amount": 1, "sources": []}],
             })
-            baseline.scanned_at = utcnow() - timedelta(days=7, minutes=1)
+            morning.scanned_at = datetime(2026, 8, 29, 23, 31)
+            evening = store_snapshot(target, {
+                "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1,
+                "errors": [], "_assets": [{"asset_key": "old", "name": "Old", "amount": 1, "sources": []}],
+            })
+            evening.scanned_at = datetime(2026, 8, 30, 12, 1)
             db.session.commit()
             current = store_snapshot(target, {
                 "total_items": 2, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
@@ -425,14 +451,21 @@ class PlatformTests(unittest.TestCase):
                     {"asset_key": "new", "name": "New", "amount": 1, "sources": []},
                 ],
             })
+            current.scanned_at = datetime(2026, 9, 5, 23, 31)
             db.session.commit()
-            target_id, baseline_id, current_id = target.id, baseline.id, current.id
+            target_id, evening_id, current_id = target.id, evening.id, current.id
         self.login()
         response = self.client.get(f"/api/monitors/{target_id}/compare?days=7")
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertEqual(response.get_json()["current"]["id"], current_id)
-        self.assertEqual(response.get_json()["baseline"]["id"], baseline_id)
+        self.assertEqual(response.get_json()["baseline"]["id"], evening_id)
+        self.assertEqual(response.get_json()["requested_baseline_date"], "2026-08-30")
+        self.assertEqual(response.get_json()["baseline_selection"], "beijing_calendar_day_latest")
         self.assertEqual(response.get_json()["diff"]["added"], [{"name": "New", "count": 1}])
+        missing = self.client.get(f"/api/monitors/{target_id}/compare?days=1").get_json()
+        self.assertEqual(missing["requested_baseline_date"], "2026-09-05")
+        self.assertIsNone(missing["baseline"])
+        self.assertIsNone(missing["diff"])
         self.assertEqual(self.client.get(f"/api/monitors/{target_id}/compare?days=2").status_code, 400)
 
     def test_item_groups_are_sorted_by_newest_constituent_without_exposing_time(self):
@@ -492,13 +525,33 @@ class PlatformTests(unittest.TestCase):
 
     def test_daily_batch_sets_maintenance_and_queues_all_targets(self):
         with self.app.app_context():
-            result = enqueue_daily()
-            self.assertEqual(result["jobs"], 3)
-            batch = db.session.get(ScanBatch, result["batch_id"])
-            self.assertEqual(batch.total_jobs, 3)
-            self.assertEqual(ScanJob.query.filter_by(batch_id=batch.id).count(), 3)
+            morning_time = datetime(2026, 9, 5, 23, 30, tzinfo=timezone.utc)
+            evening_time = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+            morning = enqueue_daily(now=morning_time)
+            duplicate = enqueue_daily(now=morning_time + timedelta(minutes=5))
+            evening = enqueue_daily(now=evening_time)
+            self.assertEqual(scheduled_slot_key(morning_time), "2026-09-06-AM")
+            self.assertEqual(scheduled_slot_key(evening_time), "2026-09-06-PM")
+            self.assertEqual(morning["jobs"], 3)
+            self.assertEqual(duplicate["batch_id"], morning["batch_id"])
+            self.assertTrue(duplicate["existing"])
+            self.assertNotEqual(evening["batch_id"], morning["batch_id"])
+            self.assertEqual(ScanBatch.query.count(), 2)
+            self.assertEqual(ScanJob.query.filter(ScanJob.batch_id.is_not(None)).count(), 6)
             from cs2_inventory.services import maintenance_active
             self.assertTrue(maintenance_active())
+            first = db.session.get(ScanBatch, morning["batch_id"])
+            for job in ScanJob.query.filter_by(batch_id=first.id):
+                job.status = "completed"
+            db.session.commit()
+            finish_batch(first.id)
+            self.assertTrue(maintenance_active())
+            second = db.session.get(ScanBatch, evening["batch_id"])
+            for job in ScanJob.query.filter_by(batch_id=second.id):
+                job.status = "completed"
+            db.session.commit()
+            finish_batch(second.id)
+            self.assertFalse(maintenance_active())
 
     def test_worker_stores_only_explicit_live_protection_for_public_display(self):
         fake = {
@@ -542,6 +595,9 @@ class PlatformTests(unittest.TestCase):
         self.assertIn('data-days="1"', html)
         self.assertIn('data-days="3"', html)
         self.assertIn('data-days="7"', html)
+        self.assertIn("requested_baseline_date", html)
+        self.assertIn("q.billing_remaining", html)
+        self.assertIn("q.warning_level", html)
         self.assertNotIn("latest_detected_at", html)
         self.assertIn("timeZone:'Asia/Shanghai'", html)
         self.assertIn('id="adminOverviewPage"', html)

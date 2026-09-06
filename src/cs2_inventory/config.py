@@ -18,14 +18,16 @@ class Config:
     SESSION_COOKIE_SECURE = os.getenv("CS2_COOKIE_SECURE", "0") == "1"
     SESSION_COOKIE_PATH = os.getenv("CS2_COOKIE_PATH", "/cs2_inventory/")
     PERMANENT_SESSION_LIFETIME = 86400
-    MAX_TARGETS = int(os.getenv("CS2_MAX_TARGETS", "35"))
+    MAX_TARGETS = int(os.getenv("CS2_MAX_TARGETS", "80"))
     PAGE_SIZE = 20
     # Keep one extra day so the newest snapshot can always be compared with
     # the seven-day baseline.
     SNAPSHOT_RETENTION_DAYS = 8
-    INVENTORY_MONTHLY_BUDGET = int(os.getenv("CS2_MONTHLY_BUDGET", "9000"))
-    INVENTORY_DAILY_BUDGET = int(os.getenv("CS2_DAILY_BUDGET", "300"))
-    INVENTORY_RESERVE = int(os.getenv("CS2_INVENTORY_RESERVE", "1000"))
+    INVENTORY_MONTHLY_BUDGET = int(os.getenv("CS2_MONTHLY_BUDGET", "150000"))
+    INVENTORY_DAILY_BUDGET = int(os.getenv("CS2_DAILY_BUDGET", "5000"))
+    INVENTORY_RESERVE = int(os.getenv("CS2_INVENTORY_RESERVE", "30000"))
+    INVENTORY_CRITICAL_RESERVE = int(os.getenv("CS2_INVENTORY_CRITICAL_RESERVE", "15000"))
+    INVENTORY_CREDITS_PER_REQUEST = int(os.getenv("CS2_INVENTORY_CREDITS_PER_REQUEST", "3"))
     REQUESTS_PER_SCAN = int(os.getenv("CS2_REQUESTS_PER_SCAN", "7"))
     PROFILE_REFRESH_DAYS = 7
     STEAMWEBAPI_KEY = os.getenv("STEAMWEBAPI_KEY", "").strip()

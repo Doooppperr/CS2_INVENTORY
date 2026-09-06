@@ -312,12 +312,16 @@ class MaxCoverageTests(unittest.TestCase):
             "cs2_inventory.inventory_engine.urllib.request.urlopen",
             side_effect=[error, Response()],
         ), mock.patch("cs2_inventory.inventory_engine.time.sleep") as sleep:
+            attempts = []
             payload, headers = http_get_json_with_headers(
-                "https://example.invalid/inventory", retries=1
+                "https://example.invalid/inventory",
+                retries=1,
+                request_observer=lambda: attempts.append(1),
             )
 
         self.assertEqual(payload, {"ok": True})
         self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(len(attempts), 2)
         sleep.assert_called_once_with(37.0)
 
     def test_max_coverage_defaults_to_two_parse1_samples(self):

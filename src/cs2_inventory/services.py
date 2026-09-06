@@ -376,20 +376,38 @@ def quota_status() -> dict:
     daily = db.session.query(func.coalesce(func.sum(QuotaUsage.credits), 0)).filter(
         QuotaUsage.endpoint == "inventory", QuotaUsage.used_at >= daily_start
     ).scalar()
+    billing_budget = current_app.config["INVENTORY_MONTHLY_BUDGET"]
+    billing_used = int(monthly or 0)
+    billing_remaining = max(0, billing_budget - billing_used)
+    warning_reserve = current_app.config["INVENTORY_RESERVE"]
+    critical_reserve = current_app.config["INVENTORY_CRITICAL_RESERVE"]
+    if billing_remaining <= critical_reserve:
+        warning_level = "critical"
+    elif billing_remaining <= warning_reserve:
+        warning_level = "warning"
+    else:
+        warning_level = "normal"
     return {
         "daily_used": int(daily or 0),
         "daily_budget": current_app.config["INVENTORY_DAILY_BUDGET"],
         "daily_budget_enforced": False,
-        "billing_used": int(monthly or 0),
-        "billing_budget": current_app.config["INVENTORY_MONTHLY_BUDGET"],
-        "billing_budget_enforced": True,
-        "reserve": current_app.config["INVENTORY_RESERVE"],
+        "billing_used": billing_used,
+        "billing_budget": billing_budget,
+        "billing_remaining": billing_remaining,
+        "billing_budget_enforced": False,
+        "reserve": warning_reserve,
+        "warning_reserve": warning_reserve,
+        "critical_reserve": critical_reserve,
+        "warning_level": warning_level,
+        "estimated_credits_per_scan": (
+            current_app.config["REQUESTS_PER_SCAN"]
+            * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]
+        ),
+        "scheduled_scans_per_day": 2,
     }
 
 
 def quota_allows_scan(*, admin: bool = False) -> bool:
-    quota = quota_status()
-    credits = current_app.config["REQUESTS_PER_SCAN"]
-    if quota["billing_used"] + credits > quota["billing_budget"]:
-        return False
+    # Provider limits and reserve thresholds are observability-only. The worker
+    # continues scheduled, initial and administrator jobs at every warning level.
     return True

@@ -98,6 +98,7 @@ class SteamwebapiRawFetchResult:
     sources: List[str]
     total_inventory_counts: List[Optional[int]]
     errors: List[str]
+    request_attempts: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -215,6 +216,7 @@ def http_get_json_with_headers(
     retries: int = 3,
     user_agent: str = DEFAULT_USER_AGENT,
     cookie: str | None = None,
+    request_observer: Callable[[], None] | None = None,
 ) -> Tuple[Any, Dict[str, str]]:
     """GET JSON with retry handling and return (payload, response headers).
 
@@ -233,6 +235,8 @@ def http_get_json_with_headers(
     for attempt in range(retries + 1):
         if REQUEST_THROTTLE is not None and full_url.startswith(STEAMWEBAPI_INVENTORY_URL):
             REQUEST_THROTTLE()
+        if request_observer is not None:
+            request_observer()
         request = urllib.request.Request(full_url, headers=headers, method="GET")
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -745,6 +749,12 @@ def fetch_steamwebapi_raw_inventory(
 
     pages: List[RawInventoryPage] = []
     errors: List[str] = []
+    request_attempts = 0
+
+    def record_request_attempt() -> None:
+        nonlocal request_attempts
+        request_attempts += 1
+
     for sample_index in range(max(1, samples)):
         start_assetid = ""
         for page_index in range(max_pages_per_sample):
@@ -755,7 +765,11 @@ def fetch_steamwebapi_raw_inventory(
             started = time.monotonic()
             try:
                 payload, headers = http_get_json_with_headers(
-                    STEAMWEBAPI_INVENTORY_URL, request_params, timeout=timeout, retries=1
+                    STEAMWEBAPI_INVENTORY_URL,
+                    request_params,
+                    timeout=timeout,
+                    retries=1,
+                    request_observer=record_request_attempt,
                 )
             except SteamQueryError as exc:
                 errors.append(f"{page_label}: {exc}")
@@ -807,6 +821,7 @@ def fetch_steamwebapi_raw_inventory(
         sources=[page.source for page in pages],
         total_inventory_counts=[page.total_inventory_count for page in pages],
         errors=errors,
+        request_attempts=request_attempts,
     )
 
 
@@ -1993,6 +2008,7 @@ def _sources_entry(
     *,
     error: str = "",
     total_inventory_count: Optional[int] = None,
+    provider_requests: int = 0,
 ) -> Dict[str, Any]:
     entry: Dict[str, Any] = {
         "requests": requests,
@@ -2001,6 +2017,8 @@ def _sources_entry(
     }
     if total_inventory_count is not None:
         entry["total_inventory_count"] = total_inventory_count
+    if provider_requests:
+        entry["provider_requests"] = provider_requests
     if error:
         entry["error"] = error
     return entry
@@ -2178,6 +2196,7 @@ def run_max_coverage_query(
             len(normal_fetch.pages),
             normal_fetch.upstream_item_counts,
             error="；".join(normal_fetch.errors),
+            provider_requests=normal_fetch.request_attempts,
         )
         errors.extend(normal_fetch.errors)
 
@@ -2206,6 +2225,7 @@ def run_max_coverage_query(
             len(trading_fetch.pages),
             trading_fetch.upstream_item_counts,
             error="；".join(trading_fetch.errors),
+            provider_requests=trading_fetch.request_attempts,
         )
         errors.extend(trading_fetch.errors)
 
@@ -2231,6 +2251,7 @@ def run_max_coverage_query(
             len(mode1_fetch.pages),
             mode1_fetch.upstream_item_counts,
             error="；".join(mode1_fetch.errors),
+            provider_requests=mode1_fetch.request_attempts,
         )
         errors.extend(mode1_fetch.errors)
 
@@ -2256,6 +2277,7 @@ def run_max_coverage_query(
             len(parsed_fetch.pages),
             parsed_fetch.upstream_item_counts,
             error="；".join(parsed_fetch.errors),
+            provider_requests=parsed_fetch.request_attempts,
         )
         errors.extend(parsed_fetch.errors)
 

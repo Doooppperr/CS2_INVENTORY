@@ -127,11 +127,14 @@ def refresh_official_usage() -> dict:
 
 
 def estimate_inventory_credits(result: dict) -> int:
-    total = 0
+    requests = 0
     for value in (result.get("sources") or {}).values():
         if isinstance(value, dict):
-            total += int(value.get("requests", 0) or 0)
-    return total or current_app.config["REQUESTS_PER_SCAN"]
+            requests += int(value.get("provider_requests", 0) or 0)
+    return (requests * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]) or (
+        current_app.config["REQUESTS_PER_SCAN"]
+        * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]
+    )
 
 
 def claim_next_job() -> int | None:
@@ -188,8 +191,14 @@ def finish_batch(batch_id: int | None) -> None:
     if jobs and all(job.status in {"completed", "failed", "cancelled"} for job in jobs):
         batch.status = "completed" if batch.failed_jobs == 0 else "completed_with_errors"
         batch.finished_at = utcnow()
-        state_set("maintenance", "0")
-        state_set("maintenance_message", "")
+        other_active = ScanBatch.query.filter(
+            ScanBatch.id != batch.id,
+            ScanBatch.kind == "daily",
+            ScanBatch.status.in_(["queued", "running"]),
+        ).first()
+        if other_active is None:
+            state_set("maintenance", "0")
+            state_set("maintenance_message", "")
         prune_expired()
     db.session.commit()
 
