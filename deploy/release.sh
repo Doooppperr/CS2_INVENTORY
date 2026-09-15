@@ -3,6 +3,8 @@ set -euo pipefail
 
 archive=${1:?archive required}
 commit=${2:?commit required}
+mode=${3:-migrate}
+[[ "$mode" == migrate || "$mode" == --no-migrations ]] || { echo "Invalid release mode" >&2; exit 2; }
 base=/opt/cs2-inventory
 release="$base/releases/$commit"
 current="$base/current"
@@ -14,14 +16,14 @@ legacy_active=$(systemctl is-active cs2-inventory.service 2>/dev/null || true)
 rollback() {
   code=$?
   if [[ $code -ne 0 ]]; then
-    systemctl stop cs2-inventory-web cs2-inventory-worker cs2-inventory-cleanup.timer >/dev/null 2>&1 || true
+    systemctl stop cs2-inventory-web cs2-inventory-worker cs2-inventory-schedule.timer cs2-inventory-schedule.service cs2-inventory-cleanup.timer cs2-inventory-cleanup.service >/dev/null 2>&1 || true
     if [[ -n "$old" && -d "$old" ]]; then ln -sfn "$old" "$current.rollback"; mv -Tf "$current.rollback" "$current"; fi
-    if [[ -f "$backup/cs2_inventory.db" ]]; then
+    if [[ "$mode" == migrate && -f "$backup/cs2_inventory.db" ]]; then
       rm -f "$state/cs2_inventory.db-wal" "$state/cs2_inventory.db-shm"
       cp -f "$backup/cs2_inventory.db" "$state/cs2_inventory.db"
       chown cs2inventory:cs2inventory "$state/cs2_inventory.db"
     fi
-    for unit in web worker schedule.service schedule.timer cleanup.service cleanup.timer; do
+    for unit in web.service worker.service schedule.service schedule.timer cleanup.service cleanup.timer; do
       src="$backup/cs2-inventory-$unit"
       if [[ -f "$src" ]]; then
         cp -f "$src" "/etc/systemd/system/cs2-inventory-$unit"
@@ -58,7 +60,7 @@ assert target.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 target.close(); source.close()
 PY
 fi
-for unit in web worker schedule.service schedule.timer cleanup.service cleanup.timer; do
+for unit in web.service worker.service schedule.service schedule.timer cleanup.service cleanup.timer; do
   src="/etc/systemd/system/cs2-inventory-$unit"
   [[ -f "$src" ]] && cp -a "$src" "$backup/cs2-inventory-$unit"
 done
@@ -67,11 +69,13 @@ tar -xzf "$archive" -C "$release"
 chown -R root:root "$release"
 python3 -m venv "$base/venv"
 "$base/venv/bin/pip" install --disable-pip-version-check -q -r "$release/requirements.txt"
+if [[ "$mode" == migrate ]]; then
 (cd "$release" && PYTHONPATH="$release/src" CS2_STATE_DIR="$state" \
   INVENTORY_OBSERVATION_CACHE="$state/observations.json" \
   "$base/venv/bin/alembic" upgrade head)
 PYTHONPATH="$release/src" CS2_STATE_DIR="$state" INVENTORY_OBSERVATION_CACHE="$state/observations.json" \
   "$base/venv/bin/python" -m cs2_inventory.cli init-db
+fi
 chown -R cs2inventory:cs2inventory "$state"
 
 install -o root -g root -m 0644 "$release/deploy/cs2-inventory-web.service" /etc/systemd/system/

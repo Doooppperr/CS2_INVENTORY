@@ -2,6 +2,10 @@
 
 CS2 Inventory 是一个按 SteamID64 监控 CS2 库存的 Web 应用。后端通过多来源采样最大化覆盖，并将公开可见、近期观测及交易保护中的资产合并为一个统一库存快照。
 
+正式地址：**https://cs2inventory.cn/**。HTTP 与 `www.cs2inventory.cn` 自动跳转至 HTTPS 裸域名；原 IP 和 `/cs2_inventory/` 入口已退役。切换域名后需要重新登录，主题偏好按新域名保存。
+
+网站页脚统一展示 [沪ICP备2026034136号-2](https://beian.miit.gov.cn/)。同服务器的 HealthDoc 继续由 `healthdoc.cn` 及其现有 www 别名提供服务，两个应用均不再通过 IP 提供访问。
+
 正式源码位于 `src/cs2_inventory/`，测试位于 `tests/`，部署文件位于 `deploy/`，开发与运维文档位于 `开发文档/`。
 
 ## 功能

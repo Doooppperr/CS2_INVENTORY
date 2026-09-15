@@ -19,4 +19,12 @@
 - 主题偏好是纯客户端状态，保存键为 `localStorage["cs2-inventory-theme"]`，合法值为 `system|light|dark`；不进入用户表、会话或业务 API。
 - 两个页面模板在主 CSS 解析前同步读取偏好，并写入 `html[data-theme-preference]` 与解析后的 `html[data-theme]`，防止首屏主题闪烁；存储不可用或值非法时回退为 `system`。
 - `system` 通过 `matchMedia("(prefers-color-scheme: dark)")` 解析，并只在该偏好下响应系统变化；显式浅色或深色不被系统事件覆盖。`storage` 事件负责同源标签页同步。
-- 共享 `static/theme.js` 绑定落地页导航、未登录控制台和登录后控制台的选择器。模板根据当前页面路径解析应用前缀后加载脚本，使根路径开发环境与 `/cs2_inventory/` 反向代理部署共用同一逻辑。两页结构样式分别保留，颜色统一使用语义变量；浅色保持暖色复古基线，深色使用紫黑、紫色强调和青绿状态色。
+- 共享 `static/theme.js` 绑定落地页导航、未登录控制台和登录后控制台的选择器。模板使用 Flask url_for 生成共享主题脚本地址，开发和生产统一根路径部署；旧 `/cs2_inventory/` 前缀已退役。两页结构样式分别保留，颜色统一使用语义变量；浅色保持暖色复古基线，深色使用紫黑、紫色强调和青绿状态色。
+
+## 域名隔离与共享页脚（1.3.2）
+
+Apache 为 cs2inventory.cn 单独代理到 127.0.0.1:5060；www/HTTP 只负责规范化跳转，默认 80/443 虚拟主机不提供应用。healthdoc.cn 保留原业务代理，仅增加旧 CS2 前缀的 404 规则。旧 IP 虚拟主机停止启用。
+
+应用使用 TRUSTED_HOSTS 校验生产域名及本机检查 Host，不信任客户端 X-Forwarded-Host。会话 Cookie 为 host-only、Path=/，生产 Secure=true。API 结构、后台任务和数据库无变更。
+
+_site_footer.html 与 site-footer.css 共享备案文本和样式。body 采用纵向 flex 与最小视口高度，内容区域伸展、页脚处于正常文档流；短页贴底，长页随滚动，不采用悬浮定位。

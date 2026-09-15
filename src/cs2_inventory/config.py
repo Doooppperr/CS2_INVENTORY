@@ -16,7 +16,12 @@ class Config:
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = os.getenv("CS2_COOKIE_SECURE", "0") == "1"
-    SESSION_COOKIE_PATH = os.getenv("CS2_COOKIE_PATH", "/cs2_inventory/")
+    SESSION_COOKIE_PATH = os.getenv("CS2_COOKIE_PATH", "/")
+    TRUSTED_HOSTS = [
+        host.strip()
+        for host in os.getenv("CS2_TRUSTED_HOSTS", "localhost,127.0.0.1").split(",")
+        if host.strip()
+    ]
     PERMANENT_SESSION_LIFETIME = 86400
     MAX_TARGETS = int(os.getenv("CS2_MAX_TARGETS", "80"))
     PAGE_SIZE = 20

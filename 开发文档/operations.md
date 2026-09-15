@@ -1,5 +1,11 @@
 # 运维
 
+正式地址为 https://cs2inventory.cn/；HTTP/www 跳转至该地址。IP 和旧 /cs2_inventory 前缀已退役。healthdoc.cn 继续提供独立应用。
+
+TLS：新域名使用独立 Certbot webroot 证书，certbot.timer 自动续期；deploy hook 只处理 cs2inventory.cn，先 apache2ctl -t 再平滑重载。主动演练：`sudo certbot renew --cert-name cs2inventory.cn --dry-run`。
+
+发布与切换脚本、验收矩阵和恢复规则见 [deployment.md](deployment.md)。常规代码回滚默认 --code-only，不恢复数据库、不重开 IP 入口；数据库恢复必须显式 --restore-database。
+
 ## 服务
 
 - `cs2-inventory-web.service`：Gunicorn Web 服务。
@@ -20,7 +26,7 @@ sudo -u cs2inventory env PYTHONPATH=/opt/cs2-inventory/current/src CS2_STATE_DIR
   /opt/cs2-inventory/venv/bin/python -m cs2_inventory.cli cleanup-accounts
 ```
 
-发布使用 `deploy/release.sh`，失败时自动恢复旧软链接、部署前数据库和 systemd units；人工完整回滚使用 `deploy/rollback.sh <旧版本目录> <pre-deploy备份目录>`。
+发布使用 `deploy/release.sh`，失败时自动恢复旧软链接、部署前数据库和 systemd units；人工代码回滚使用 `deploy/rollback.sh <旧版本目录> <pre-deploy备份目录> --code-only`；需要恢复数据库时显式使用 `--restore-database`。
 
 生命周期截止均按精确时间执行。清理 timer 只负责物理删除，timer 延迟不会让付费权益继续可用。每日队列和 Worker 会排除仅由宽限或已过期账号持有的目标。
 

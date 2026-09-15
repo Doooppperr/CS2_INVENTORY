@@ -1,11 +1,36 @@
-# 部署
+# 部署（当前规范：2026-09-15，1.3.2）
 
-1. 确认本地测试、编译、密钥扫描及工作树检查通过。
-2. 推送 GitHub `main`，以 commit SHA 打包 `git archive`。
-3. 执行 `scripts/healthdoc_backup_prune.sh`：创建并验证新冷备份，保留新备份与最近五份历史备份。
-4. 将发布包上传服务器，执行 `deploy/release.sh <archive> <commit>`；脚本先执行 Alembic 迁移，再切换发布软链接。
-5. 验证 Web、Worker、Timer、IP 路径和 HealthDoc 服务。
-6. 对比服务器发布目录、GitHub `main` 和本地 commit SHA。
+## 正式入口与约束
+
+- 唯一平台地址为 `https://cs2inventory.cn/`；HTTP 与 www 308 跳转并保留路径、查询参数。旧 `/cs2_inventory` 前缀优先返回 404，不参与跳转。
+- HealthDoc 继续使用 healthdoc.cn 和现有 www 别名；IP、未知 Host 的 80/443 默认站点返回 404。IP HTTPS 可能先发生证书名称不匹配，忽略该错误也不提供应用。
+- CS2 仅监听 127.0.0.1:5060，HealthDoc 服务保持现有端口；不更改 DNS、SSH、防火墙或扫描时间。
+- 不再执行旧步骤中的 healthdoc_backup_prune.sh：它会停止 HealthDoc 服务并裁剪备份，不属于本次域名切换。
+
+## 发布与域名切换
+
+1. 本地执行 `PYTHONPATH=src python -m unittest discover -s tests -v`、Ruff 和 `git diff --check`；对生产数据库运行 `scripts/domain_data_audit.py` 保存只读摘要。
+2. 将 deploy 文件上传服务器，以 root 执行 `bash deploy/domain-routing.sh prepare /var/backups/cs2-domain-<唯一批次>`。脚本备份 Apache、环境文件、CS2 单元和状态、旧 release，只启用新域名的 ACME HTTP 验证站点。
+3. 使用现有 ACME 账户运行 `certbot certonly --webroot -w /var/www/cs2-acme --cert-name cs2inventory.cn -d cs2inventory.cn -d www.cs2inventory.cn`。不使用 Apache 自动安装器，不重写 HealthDoc 业务代理。
+4. root 执行 `bash deploy/test-domain-routing.sh <切换备份目录>`，在独立回环 18080/18443 实例检查路由、恢复哈希/链接及旧入口恢复行为；生产访问不参与回滚演练。
+5. 提交代码、测试和文档，推送 GitHub main；以完整提交 SHA 生成 `git archive --format=tar.gz`，上传同一归档。
+6. root 执行 `bash deploy/release.sh <归档> <完整SHA> --no-migrations`。脚本停止 CS2 写入服务和定时任务、备份并检查 SQLite，发布后恢复服务。本版本不执行 Alembic 或 init-db。
+7. root 执行新 release 中的 `bash deploy/domain-routing.sh activate <切换备份目录>`：安装域名与默认拒绝站点，禁用旧 IP 站点，更新 Cookie/Host 配置，为 HealthDoc 增加旧 CS2 路径拒绝 include；验证配置后重启 CS2 Web 并平滑重载 Apache。
+8. 执行下面的验收矩阵、数据摘要对比、新证书续期演练，核对本地 HEAD、GitHub main 与服务器 current 的完整 SHA 一致。
+
+生产环境字段：`CS2_COOKIE_PATH=/`、`CS2_COOKIE_SECURE=1`、`CS2_TRUSTED_HOSTS=cs2inventory.cn,localhost,127.0.0.1`。保留原密钥，不设置 SESSION_COOKIE_DOMAIN。新域名需要重新登录。
+
+## 验收与失败恢复
+
+- HTTPS 首页、/app、两种详情路由、/static/theme.js、/static/site-footer.css 和 /ready 正常；备案号只出现一次且链接精确。
+- HTTP/www 正常路径 308；所有域名上的旧前缀以及 IP/未知 Host 404，无旧入口跳转或 API 泄露；正常域名不允许跳过证书验证。
+- HealthDoc 首页、/api/health 与现有服务状态正常；记录应用和通知进程 PID 未变。Web、Worker、两个 timer 正常且两个 timer enabled；不人工触发扫描。
+- 证书 SAN 包含裸域名与 www，执行 `certbot renew --cert-name cs2inventory.cn --dry-run`；检查 certbot.timer 和 `/etc/letsencrypt/renewal-hooks/deploy/cs2-reload.sh`。
+- 切换尚未验收时失败：root 执行 `bash deploy/domain-routing.sh restore-cutover <切换备份目录>`，恢复切换前的 Apache、环境、旧 release、单元及其运行状态，不覆盖实时数据库。这会恢复旧入口，仅用于本次失败恢复。
+- 正式验收后代码回退：`bash deploy/rollback.sh <旧release> <pre-deploy备份> --code-only`，保持新域名路由和环境字段。只有确认数据库损坏或需要恢复有迁移版本时才显式传 `--restore-database`，先停写并验证备份。
+- 原始代码归档、SHA256、差异、测试与发布证据保存在工作区外的事务目录；生产配置/数据库备份仅存服务器，不进入 Git。
+
+## 历史发布记录（以下旧 IP、前缀和回滚说明已由上述规范取代）
 
 # 每日双扫描与自然日对比发布验收（2026-09-06）
 

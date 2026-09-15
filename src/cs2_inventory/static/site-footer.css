@@ -1,0 +1,9 @@
+body{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}
+body>.wrap,body>.shell{flex:1}
+body>.shell{width:100%}
+.site-footer{flex-shrink:0;margin-top:auto;padding:24px 17px 28px;text-align:center;color:var(--muted);font:600 13px/1.8 "Microsoft YaHei",sans-serif}
+.site-footer span,.site-footer a{display:block}
+.site-footer a{width:fit-content;max-width:100%;margin:4px auto 0;color:inherit;text-underline-offset:3px;overflow-wrap:anywhere}
+.site-footer a:hover{color:var(--ink,var(--text))}
+.site-footer a:focus-visible{outline:3px solid var(--focus);outline-offset:4px}
+@media(max-width:480px){.site-footer{font-size:12px;padding-bottom:20px}}

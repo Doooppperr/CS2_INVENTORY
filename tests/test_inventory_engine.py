@@ -527,6 +527,7 @@ class MaxCoverageTests(unittest.TestCase):
         ]
 
         class FakeRaw:
+            request_attempts = 1
             def __init__(self, payload, label):
                 self.pages = [
                     RawInventoryPage(

@@ -167,14 +167,13 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn('window.addEventListener("storage"', script)
         self.assertIn("localStorage.setItem", script)
 
-    def test_theme_loader_uses_deployment_prefix_and_marketing_copy_has_semantic_lines(self):
+    def test_theme_loader_uses_root_url_and_marketing_copy_has_semantic_lines(self):
         landing = self.client.get("/").get_data(as_text=True)
         console = self.client.get("/app/monitors/999/").get_data(as_text=True)
 
         for html in (landing, console):
-            self.assertIn("location.pathname.match(/^(.*\\/)app", html)
-            self.assertIn("script.src=`${base}static/theme.js`", html)
-            self.assertNotIn('src="/static/theme.js"', html)
+            self.assertIn('script.src="/static/theme.js"', html)
+            self.assertNotIn('static/theme.js`', html)
 
         self.assertIn(
             '<span>导入 SteamID64 统一查看库存与历史变化</span>'
