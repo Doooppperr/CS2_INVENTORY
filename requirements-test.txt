@@ -1,0 +1,3 @@
+-r requirements.txt
+# Legacy, optional HTML-history parser fixtures; not used by the Web/API worker.
+beautifulsoup4==4.12.3

@@ -41,8 +41,11 @@ Windows PowerShell 将环境变量改为 `$env:PYTHONPATH="$PWD\src"` 等价形�
 ## 测试
 
 ```bash
+python -m pip install -r requirements-test.txt
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
+
+全量测试包含可选历史 HTML 解析器的夹具，额外依赖 beautifulsoup4；生产 Web/API Worker 继续使用 requirements.txt，测试在独立环境中运行。
 
 > 本仓库不保存 API Key、生产数据库、真实库存响应或发布归档。
 

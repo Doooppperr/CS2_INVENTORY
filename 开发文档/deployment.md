@@ -9,7 +9,7 @@
 
 ## 发布与域名切换
 
-1. 本地执行 `PYTHONPATH=src python -m unittest discover -s tests -v`、Ruff 和 `git diff --check`；对生产数据库运行 `scripts/domain_data_audit.py` 保存只读摘要。
+1. 独立测试环境安装 `pip install -r requirements-test.txt` 后执行 `PYTHONPATH=src python -m unittest discover -s tests -v`、Ruff 和 `git diff --check`；对生产数据库运行 `scripts/domain_data_audit.py` 保存只读摘要。requirements-test.txt 包含旧版可选 HTML 解析器夹具的 beautifulsoup4 依赖，不修改生产 Web/API Worker 的依赖环境。
 2. 将 deploy 文件上传服务器，以 root 执行 `bash deploy/domain-routing.sh prepare /var/backups/cs2-domain-<唯一批次>`。脚本备份 Apache、环境文件、CS2 单元和状态、旧 release，只启用新域名的 ACME HTTP 验证站点。
 3. 使用现有 ACME 账户运行 `certbot certonly --webroot -w /var/www/cs2-acme --cert-name cs2inventory.cn -d cs2inventory.cn -d www.cs2inventory.cn`。不使用 Apache 自动安装器，不重写 HealthDoc 业务代理。
 4. root 执行 `bash deploy/test-domain-routing.sh <切换备份目录>`，在独立回环 18080/18443 实例检查路由、恢复哈希/链接及旧入口恢复行为；生产访问不参与回滚演练。
