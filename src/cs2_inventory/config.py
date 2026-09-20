@@ -23,7 +23,7 @@ class Config:
         if host.strip()
     ]
     PERMANENT_SESSION_LIFETIME = 86400
-    MAX_TARGETS = int(os.getenv("CS2_MAX_TARGETS", "80"))
+    MAX_TARGETS = int(os.getenv("CS2_MAX_TARGETS", "100"))
     PAGE_SIZE = 20
     # Keep one extra day so the newest snapshot can always be compared with
     # the seven-day baseline.

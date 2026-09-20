@@ -246,7 +246,7 @@ class PlatformTests(unittest.TestCase):
         token = self.login("cs2inventory_admin")
         status = self.client.get("/api/admin/status", headers={"X-CSRF-Token": token}).get_json()
         self.assertEqual(status["targets"], 81)
-        self.assertEqual(status["target_limit"], 80)
+        self.assertEqual(status["target_limit"], 100)
         self.assertFalse(status["target_limit_enforced"])
 
     def test_daily_budget_is_observability_only(self):
@@ -325,6 +325,153 @@ class PlatformTests(unittest.TestCase):
             result = prune_expired()
             self.assertEqual(result["snapshots"], 1)
             self.assertIsNone(db.session.get(Snapshot, first.id))
+
+    def test_prune_keeps_recent_48h_and_one_per_beiing_day(self):
+        with self.app.app_context():
+            target = SteamTarget.query.first()
+            now = utcnow()
+            rows = []
+            # 北京自然日 D-4：三张（保留最后一张）
+            for hour in (93, 92, 91):
+                snap = store_snapshot(target, {"total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [], "_assets": [{"asset_key": f"d4-{hour}", "name": "A", "amount": 1, "sources": []}]})
+                snap.scanned_at = now - timedelta(hours=hour)
+                rows.append(snap)
+            # D-3：两张（保留最后一张）
+            for hour in (72, 70):
+                snap = store_snapshot(target, {"total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [], "_assets": [{"asset_key": f"d3-{hour}", "name": "A", "amount": 1, "sources": []}]})
+                snap.scanned_at = now - timedelta(hours=hour)
+                rows.append(snap)
+            # 48 小时内：两张（全部保留）
+            for hour in (47, 30):
+                snap = store_snapshot(target, {"total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1, "errors": [], "_assets": [{"asset_key": f"recent-{hour}", "name": "A", "amount": 1, "sources": []}]})
+                snap.scanned_at = now - timedelta(hours=hour)
+                rows.append(snap)
+            db.session.commit()
+            result = prune_expired()
+            # D-4 删 2 张 + D-3 删 1 张 = 3 张
+            self.assertEqual(result["snapshots"], 3)
+            survivors = {row.id for row in Snapshot.query.filter_by(target_id=target.id).all()}
+            db.session.expire_all()
+            scanned_hours = {}
+            for row in rows:
+                fresh = db.session.get(Snapshot, row.id)
+                if fresh is not None:
+                    scanned_hours[row.id] = (now - fresh.scanned_at.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+            d4_rows = [row for row in rows if 91 <= scanned_hours.get(row.id, -1) <= 93]
+            d3_rows = [row for row in rows if 70 <= scanned_hours.get(row.id, -1) <= 72]
+            recent_rows = [row for row in rows if scanned_hours.get(row.id, 1e9) < 48]
+            self.assertIn(max(d4_rows, key=lambda row: row.id).id, survivors)
+            self.assertIn(max(d3_rows, key=lambda row: row.id).id, survivors)
+            self.assertTrue({row.id for row in recent_rows} <= survivors)
+
+    def test_worker_batch_group_claims_light_jobs_and_stores_snapshots(self):
+        with self.app.app_context():
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            targets = [row.target for row in user.subscriptions][:3]
+            batch = ScanBatch(kind="daily", slot_key=f"{utcnow().date().isoformat()}-R1", status="running", total_jobs=3)
+            db.session.add(batch)
+            db.session.flush()
+            job_ids = []
+            for target in targets:
+                job = ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind="daily_light")
+                db.session.add(job)
+                target.scan_status = "queued"
+                db.session.flush()
+                job_ids.append(job.id)
+            db.session.commit()
+
+            fake_items = {
+                target.steamid: [
+                    {"assetid": f"{index}", "classid": "100", "instanceid": "0",
+                     "market_hash_name": "Batch Item", "market_name": "Batch Item", "tradable": True}
+                    for index in range(2)
+                ]
+                for target in targets
+            }
+            fake_result = {
+                "steamid": "any",
+                "public": [{"name": "Batch Item", "count": 2, "assetids": ["0", "1"], "sources": ["steamwebapi:batch"]}],
+                "coverage": {"status": "partial"}, "elapsed_ms": 5, "errors": [],
+                "sources": {"steamwebapi:batch": {"provider_requests": 0}},
+            }
+            from cs2_inventory.worker import claim_batch_group, process_batch_group
+            with mock.patch("cs2_inventory.worker.fetch_steamwebapi_batch", return_value=(fake_items, [], 1)) as fetch, \
+                    mock.patch("cs2_inventory.worker.run_lightweight_query", return_value=fake_result) as light:
+                claimed = claim_batch_group()
+                self.assertEqual(claimed, job_ids)
+                process_batch_group(claimed)
+                self.assertEqual(fetch.call_count, 1)
+                self.assertEqual(light.call_count, 3)
+            db.session.expire_all()
+            for job_id in job_ids:
+                job = db.session.get(ScanJob, job_id)
+                self.assertEqual(job.status, "completed")
+                self.assertIsNotNone(Snapshot.query.filter_by(target_id=job.target_id).first())
+            self.assertEqual(QuotaUsage.query.filter_by(source="daily_light").count(), 1)
+            usage = QuotaUsage.query.filter_by(source="daily_light").one()
+            self.assertEqual(usage.credits, 3)
+            self.assertEqual(db.session.get(ScanBatch, batch.id).status, "completed")
+
+    def test_worker_batch_group_failure_fails_jobs_without_snapshots(self):
+        with self.app.app_context():
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            targets = [row.target for row in user.subscriptions][:2]
+            batch = ScanBatch(kind="daily", slot_key=f"{utcnow().date().isoformat()}-R3", status="running", total_jobs=2)
+            db.session.add(batch)
+            db.session.flush()
+            job_ids = []
+            for target in targets:
+                job = ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind="daily_light")
+                db.session.add(job)
+                db.session.flush()
+                job_ids.append(job.id)
+            db.session.commit()
+            from cs2_inventory.worker import claim_batch_group, process_batch_group
+            with mock.patch("cs2_inventory.worker.fetch_steamwebapi_batch", side_effect=RuntimeError("network down")):
+                claimed = claim_batch_group()
+                self.assertEqual(claimed, job_ids)
+                process_batch_group(claimed)
+            db.session.expire_all()
+            for job_id in job_ids:
+                job = db.session.get(ScanJob, job_id)
+                self.assertEqual(job.status, "failed")
+                self.assertIn("batch 请求失败", job.error)
+            self.assertEqual(db.session.get(ScanBatch, batch.id).status, "completed_with_errors")
+
+    def test_batch_group_missing_steamid_fails_single_job_only(self):
+        with self.app.app_context():
+            user = User.query.filter_by(username="cs2inventory_user").one()
+            targets = [row.target for row in user.subscriptions][:2]
+            batch = ScanBatch(kind="daily", slot_key=f"{utcnow().date().isoformat()}-R4", status="running", total_jobs=2)
+            db.session.add(batch)
+            db.session.flush()
+            job_ids = []
+            for target in targets:
+                job = ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind="daily_light")
+                db.session.add(job)
+                db.session.flush()
+                job_ids.append(job.id)
+            db.session.commit()
+            # 只有第一个目标的 SteamID 出现在 batch 响应中
+            fake_items = {targets[0].steamid: []}
+            fake_result = {
+                "steamid": targets[0].steamid,
+                "public": [{"name": "Solo Item", "count": 1, "assetids": ["9"], "sources": ["steamwebapi:batch"]}],
+                "coverage": {"status": "partial"}, "elapsed_ms": 5, "errors": [],
+                "sources": {"steamwebapi:batch": {"provider_requests": 0}},
+            }
+            from cs2_inventory.worker import claim_batch_group, process_batch_group
+            with mock.patch("cs2_inventory.worker.fetch_steamwebapi_batch", return_value=(fake_items, [], 1)), \
+                    mock.patch("cs2_inventory.worker.run_lightweight_query", return_value=fake_result):
+                claimed = claim_batch_group()
+                self.assertEqual(claimed, job_ids)
+                process_batch_group(claimed)
+            db.session.expire_all()
+            first_job, second_job = (db.session.get(ScanJob, job_id) for job_id in job_ids)
+            self.assertEqual(first_job.status, "completed")
+            self.assertEqual(second_job.status, "failed")
+            self.assertIn("batch 响应缺少该 SteamID", second_job.error)
+            self.assertEqual(db.session.get(ScanBatch, batch.id).status, "completed_with_errors")
 
     def test_same_asset_language_change_is_canonicalized_and_not_reported(self):
         with self.app.app_context():
@@ -525,19 +672,24 @@ class PlatformTests(unittest.TestCase):
 
     def test_daily_batch_sets_maintenance_and_queues_all_targets(self):
         with self.app.app_context():
+            # 北京时间 2026-09-06 07:30 → R1 轻量窗口；20:00 → R5 轻量窗口。
             morning_time = datetime(2026, 9, 5, 23, 30, tzinfo=timezone.utc)
             evening_time = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
             morning = enqueue_daily(now=morning_time)
             duplicate = enqueue_daily(now=morning_time + timedelta(minutes=5))
             evening = enqueue_daily(now=evening_time)
-            self.assertEqual(scheduled_slot_key(morning_time), "2026-09-06-AM")
-            self.assertEqual(scheduled_slot_key(evening_time), "2026-09-06-PM")
+            self.assertEqual(scheduled_slot_key(morning_time), "2026-09-06-R1")
+            self.assertEqual(scheduled_slot_key(evening_time), "2026-09-06-R5")
             self.assertEqual(morning["jobs"], 3)
             self.assertEqual(duplicate["batch_id"], morning["batch_id"])
             self.assertTrue(duplicate["existing"])
             self.assertNotEqual(evening["batch_id"], morning["batch_id"])
             self.assertEqual(ScanBatch.query.count(), 2)
             self.assertEqual(ScanJob.query.filter(ScanJob.batch_id.is_not(None)).count(), 6)
+            for batch_id in (morning["batch_id"], evening["batch_id"]):
+                batch = db.session.get(ScanBatch, batch_id)
+                kinds = {job.kind for job in ScanJob.query.filter_by(batch_id=batch.id)}
+                self.assertEqual(kinds, {"daily_light"})
             from cs2_inventory.services import maintenance_active
             self.assertTrue(maintenance_active())
             first = db.session.get(ScanBatch, morning["batch_id"])
@@ -552,6 +704,27 @@ class PlatformTests(unittest.TestCase):
             db.session.commit()
             finish_batch(second.id)
             self.assertFalse(maintenance_active())
+
+    def test_scheduled_slot_key_maps_six_rounds_with_deep_slot(self):
+        cases = [
+            (datetime(2026, 9, 6, 16, 0, tzinfo=timezone.utc), "2026-09-07-R0"),  # 北京 00:00
+            (datetime(2026, 9, 6, 20, 30, tzinfo=timezone.utc), "2026-09-07-R1"),  # 北京 04:30
+            (datetime(2026, 9, 7, 0, 30, tzinfo=timezone.utc), "2026-09-07-R2"),  # 北京 08:30 深度
+            (datetime(2026, 9, 7, 5, 0, tzinfo=timezone.utc), "2026-09-07-R3"),  # 北京 13:00
+            (datetime(2026, 9, 7, 9, 59, tzinfo=timezone.utc), "2026-09-07-R4"),  # 北京 17:59
+            (datetime(2026, 9, 7, 14, 0, tzinfo=timezone.utc), "2026-09-07-R5"),  # 北京 22:00
+        ]
+        for moment, expected in cases:
+            self.assertEqual(scheduled_slot_key(moment), expected)
+
+    def test_deep_round_slot_enqueues_daily_kind_jobs(self):
+        with self.app.app_context():
+            deep_time = datetime(2026, 9, 7, 0, 30, tzinfo=timezone.utc)  # 北京 08:30 → R2
+            result = enqueue_daily(now=deep_time)
+            self.assertTrue(result["slot_key"].endswith("-R2"))
+            batch = db.session.get(ScanBatch, result["batch_id"])
+            kinds = {job.kind for job in ScanJob.query.filter_by(batch_id=batch.id)}
+            self.assertEqual(kinds, {"daily"})
 
     def test_worker_stores_only_explicit_live_protection_for_public_display(self):
         fake = {

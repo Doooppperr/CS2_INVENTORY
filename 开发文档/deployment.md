@@ -1,5 +1,15 @@
 # 部署（当前规范：2026-09-15，1.3.2）
 
+## 六轮调度与轻量 batch 发布（2026-09-20）
+
+本发布无数据库迁移。发布清单：
+
+1. 独立测试环境执行完整 unittest 与 Ruff（含新增 batch/轻量查询/分层保留用例）。
+2. `deploy/release.sh <归档> <完整SHA> --no-migrations` 正常发布。
+3. **必须执行 `systemctl daemon-reload`**（schedule.timer 触发时间从 2 条改为 6 条 OnCalendar），随后 `systemctl restart cs2-inventory-schedule.timer` 并核对 `systemctl list-timers cs2-inventory-schedule.timer` 出现 6 个触发计划。
+4. 重启 Worker；观察一个完整 6 轮日：各槽位槽键为 `{日期}-R0..R5`（R2 深度、其余轻量）、maintenance 窗口（深度轮约 40 分钟、轻量轮约 10 分钟）、QuotaUsage 日累计（约 2,175 credits/百目标）、7 天自然日 compare 接口回归。
+5. 环境文件如显式设置 `CS2_MAX_TARGETS=80` 需同步为 100（未设置则用新默认值）。
+
 ## 正式入口与约束
 
 - 唯一平台地址为 `https://cs2inventory.cn/`；HTTP 与 www 308 跳转并保留路径、查询参数。旧 `/cs2_inventory` 前缀优先返回 404，不参与跳转。

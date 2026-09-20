@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 
@@ -15,17 +15,13 @@ from .worker import refresh_official_usage, worker_loop
 
 
 def scheduled_slot_key(now: datetime | None = None) -> str:
+    """北京时间六窗口槽键：00/04/08/12/16/20 点起各 4 小时一轮（R0-R5），无跨日回退。"""
     value = now or utcnow()
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     local = value.astimezone(BEIJING_TIMEZONE)
-    if local.time() >= time(20, 0):
-        slot_date, slot_name = local.date(), "PM"
-    elif local.time() >= time(7, 30):
-        slot_date, slot_name = local.date(), "AM"
-    else:
-        slot_date, slot_name = local.date() - timedelta(days=1), "PM"
-    return f"{slot_date.isoformat()}-{slot_name}"
+    round_index = local.hour // 4
+    return f"{local.date().isoformat()}-R{round_index}"
 
 
 def enqueue_daily(*, now: datetime | None = None) -> dict:
@@ -55,7 +51,9 @@ def enqueue_daily(*, now: datetime | None = None) -> dict:
         existing = ScanBatch.query.filter_by(slot_key=slot_key).one()
         return {"batch_id": existing.id, "jobs": existing.total_jobs, "existing": True, "slot_key": slot_key}
     for target in targets:
-        db.session.add(ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind="daily"))
+        # R2 窗口（08:00-11:59）走深度多源扫描，其余槽位走 batch 轻量路径。
+        job_kind = "daily" if slot_key.endswith("-R2") else "daily_light"
+        db.session.add(ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind=job_kind))
         target.scan_status = "queued"
     if targets:
         state_set("maintenance", "1")

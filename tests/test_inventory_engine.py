@@ -23,7 +23,9 @@ from cs2_inventory.inventory_engine import (
     classify_owner_view_hidden,
     counter_by_name,
     fetch_public_inventory,
+    fetch_steamwebapi_batch,
     fetch_steamwebapi_raw_inventory,
+    run_lightweight_query,
     group_records_by_name,
     inventory_items_from_payload,
     localize_asset_records,
@@ -715,6 +717,103 @@ class MaxCoverageTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertTrue(records[0].tradeprotected)
         self.assertTrue(records[0].tradelocked)
+
+
+class BatchQueryTests(unittest.TestCase):
+    def _batch_response(self, mapping):
+        captured = []
+
+        def fake_get(url, params, **kwargs):
+            captured.append((url, dict(params)))
+            observer = kwargs.get("request_observer")
+            if observer is not None:
+                observer()
+            payload, headers = mapping
+            return payload, headers
+
+        return captured, fake_get
+
+    def test_fetch_steamwebapi_batch_joins_ids_and_maps_items(self):
+        captured, fake_get = self._batch_response(
+            (
+                {
+                    "76561198000000000": [
+                        {"markethashname": "AK-47 | Redline", "assetid": "a1", "classid": "c1", "count": 1, "tradeprotected": True}
+                    ],
+                    "76561198000000001": [],
+                },
+                {"x-ratelimit-remaining": "19"},
+            )
+        )
+        with mock.patch("cs2_inventory.inventory_engine.http_get_json_with_headers", side_effect=fake_get):
+            items, errors, attempts = fetch_steamwebapi_batch(
+                ["76561198000000000", "76561198000000001", "76561198000000000"],
+                key="fake-key",
+                language="schinese",
+                timeout=10,
+            )
+        url, params = captured[0]
+        self.assertIn("/steam/api/inventory/batch", url)
+        self.assertEqual(params["steam_ids"], "76561198000000000,76561198000000001")
+        self.assertEqual(params["game"], "cs2")
+        self.assertEqual(params["parse"], "1")
+        self.assertEqual(attempts, 1)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(items["76561198000000000"]), 1)
+        self.assertEqual(items["76561198000000001"], [])
+
+    def test_fetch_steamwebapi_batch_reports_missing_ids(self):
+        captured, fake_get = self._batch_response(
+            (
+                {"76561198000000000": []},
+                {},
+            )
+        )
+        with mock.patch("cs2_inventory.inventory_engine.http_get_json_with_headers", side_effect=fake_get):
+            items, errors, attempts = fetch_steamwebapi_batch(
+                ["76561198000000000", "76561198000000002"],
+                key="fake-key",
+                timeout=10,
+            )
+        self.assertTrue(any("76561198000000002" in message for message in errors))
+        self.assertNotIn("76561198000000002", items)
+        self.assertEqual(items["76561198000000000"], [])
+
+    def test_fetch_steamwebapi_batch_rejects_oversized_input(self):
+        ids = [f"76561198{i:011d}" for i in range(21)]
+        with self.assertRaises(Exception):
+            fetch_steamwebapi_batch(ids, key="fake-key", timeout=10)
+
+    def test_run_lightweight_query_splits_public_and_missing(self):
+        public_payload = {
+            "assets": [{"appid": "730", "contextid": "2", "assetid": "pub-1", "classid": "c1", "instanceid": "0"}],
+            "descriptions": [
+                {"appid": "730", "contextid": "2", "classid": "c1", "instanceid": "0", "market_hash_name": "Public Skin"}
+            ],
+            "total_inventory_count": 2,
+            "success": 1,
+        }
+        batch_items = [
+            # pub-1 同时出现在公开集 → 属于可见资产而非保护
+            {"markethashname": "Public Skin", "assetid": "pub-1", "classid": "c1", "count": 1},
+            # hid-1 只在 batch 出现 → 归入保护/缺失通道
+            {"markethashname": "Hidden Skin", "assetid": "hid-1", "classid": "c2", "count": 1, "tradeprotected": True},
+        ]
+        with mock.patch("cs2_inventory.inventory_engine.fetch_public_inventory", return_value=public_payload):
+            result = run_lightweight_query(
+                "76561198000000000",
+                batch_items,
+                key="fake-key",
+                language="schinese",
+                timeout=10,
+            )
+        public_names = {row["name"] for row in result["public"]}
+        self.assertIn("Public Skin", public_names)
+        protected_names = {row["name"] for row in (result["protected_live"] + result["protected_observed"] + result["public_missing_live"] + result["public_missing_observed"])}
+        self.assertIn("Hidden Skin", protected_names)
+        self.assertEqual(result["counts"]["total"], 2)
+        self.assertIn("steam_public_contextid2", result["sources"])
+        self.assertIn("steamwebapi:batch", result["sources"])
 
 
 if __name__ == "__main__":

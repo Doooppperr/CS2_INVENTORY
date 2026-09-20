@@ -32,6 +32,8 @@ STEAM_INVENTORY_URL = "https://steamcommunity.com/inventory/{steamid}/{appid}/{c
 STEAM_TRADE_HISTORY_URL = "https://api.steampowered.com/IEconService/GetTradeHistory/v1/"
 STEAM_INVENTORY_HISTORY_URL = "https://steamcommunity.com/profiles/{steamid}/inventoryhistory/"
 STEAMWEBAPI_INVENTORY_URL = "https://www.steamwebapi.com/steam/api/inventory"
+STEAMWEBAPI_BATCH_URL = "https://www.steamwebapi.com/steam/api/inventory/batch"
+STEAMWEBAPI_BATCH_MAX_IDS = 20
 STEAM_ITEMCLASS_HOVER_URL = "https://steamcommunity.com/economy/itemclasshover/{appid}/{classid}/{instanceid}"
 DEFAULT_LANGUAGE = "schinese"
 DEFAULT_USER_AGENT = "cs2-inventory-query/1.0 (+https://steamcommunity.com/)"
@@ -823,6 +825,78 @@ def fetch_steamwebapi_raw_inventory(
         errors=errors,
         request_attempts=request_attempts,
     )
+
+
+def fetch_steamwebapi_batch(
+    steamids: Sequence[str],
+    *,
+    key: str,
+    language: str = DEFAULT_LANGUAGE,
+    timeout: float = 120.0,
+) -> Tuple[Dict[str, List[Mapping[str, Any]]], List[str], int]:
+    """Fetch parse=1 inventories for up to 20 SteamIDs in one rate-limited call.
+
+    The batch endpoint consumes a single rate-limit unit regardless of how many
+    SteamIDs are included. The response is an object keyed by SteamID whose
+    values are parse=1 item lists. Returns (items_by_steamid, errors,
+    request_attempts); a SteamID absent from the response is simply missing
+    from the mapping, which callers treat as a per-job failure.
+    """
+    if not key:
+        raise SteamQueryError("缺少 Steamwebapi key。")
+    ordered_ids: List[str] = []
+    seen: Set[str] = set()
+    for steamid in steamids:
+        steamid = str(steamid).strip()
+        if steamid and steamid not in seen:
+            seen.add(steamid)
+            ordered_ids.append(steamid)
+    if not ordered_ids:
+        return {}, [], 0
+    if len(ordered_ids) > STEAMWEBAPI_BATCH_MAX_IDS:
+        raise SteamQueryError(f"batch 单次最多 {STEAMWEBAPI_BATCH_MAX_IDS} 个 SteamID")
+    params: Dict[str, Any] = {
+        "key": key,
+        "steam_ids": ",".join(ordered_ids),
+        "game": "cs2",
+        "language": language,
+        "parse": "1",
+        "with_no_tradable": "1",
+    }
+    request_attempts = 0
+
+    def record_request_attempt() -> None:
+        nonlocal request_attempts
+        request_attempts += 1
+
+    errors: List[str] = []
+    try:
+        payload, headers = http_get_json_with_headers(
+            STEAMWEBAPI_BATCH_URL,
+            params,
+            timeout=timeout,
+            retries=1,
+            request_observer=record_request_attempt,
+        )
+    except SteamQueryError as exc:
+        return {}, [f"steamwebapi:batch: {exc}"], request_attempts
+    _rate_limit_sleep(headers)
+    error_text = _steamwebapi_error_text(payload)
+    if error_text:
+        return {}, [f"steamwebapi:batch: {error_text}"], request_attempts
+    items_by_steamid: Dict[str, List[Mapping[str, Any]]] = {}
+    if isinstance(payload, Mapping):
+        for steamid in ordered_ids:
+            value = payload.get(steamid)
+            if isinstance(value, list):
+                items_by_steamid[steamid] = [item for item in value if isinstance(item, Mapping)]
+            elif isinstance(value, Mapping):
+                items_by_steamid[steamid] = _iter_steamwebapi_items(value)
+            else:
+                errors.append(f"steamwebapi:batch: SteamID {steamid} 响应缺失或格式异常")
+    else:
+        errors.append(f"steamwebapi:batch: 响应格式异常 {type(payload).__name__}")
+    return items_by_steamid, errors, request_attempts
 
 
 def _merge_two_asset_records(first: AssetRecord, second: AssetRecord) -> AssetRecord:
@@ -2537,6 +2611,208 @@ def run_max_coverage_query(
             "hidden": hidden_total,
             "hidden_gap": hidden_gap,
             "unverified": unverified_count,
+            "public": public_count,
+            "total": total_count,
+        },
+        "sources": sources,
+        "dedupe": dedupe,
+        "excluded_false_positives": excluded,
+        "official_gap": official_gap,
+        "hidden_gap_candidates": hidden_gap_candidates,
+        "elapsed_ms": elapsed_ms,
+        "coverage": {
+            "status": coverage_status,
+            "evidence_level": evidence_level,
+            "note": note,
+        },
+        "errors": errors,
+    }
+
+
+def run_lightweight_query(
+    steamid: str,
+    batch_items: Sequence[Mapping[str, Any]],
+    *,
+    key: Optional[str] = None,
+    language: str = DEFAULT_LANGUAGE,
+    timeout: float = 60.0,
+    observation_cache_path: Optional[str] = None,
+    now: Optional[int] = None,
+    batch_provider_requests: int = 0,
+) -> Dict[str, Any]:
+    """Lightweight refresh from a pre-fetched batch payload plus the public inventory.
+
+    Mirrors the run_max_coverage_query result shape so unify_inventory consumes
+    both identically. The Steamwebapi batch endpoint shares the per-request
+    rate window but returns parse=1 rows only; trade-protected knowledge lives
+    in the 10-day observation cache and is refreshed by the daily deep scan.
+    """
+    if now is None:
+        now = int(time.time())
+    started = time.monotonic()
+    if not key:
+        key = load_steamwebapi_key(None, None)
+    sources: Dict[str, Dict[str, Any]] = {}
+    errors: List[str] = []
+    official_public_records: List[AssetRecord] = []
+    official_total: Optional[int] = None
+    official_returned = 0
+
+    try:
+        public_payload = fetch_public_inventory(
+            steamid, language=language, max_pages=20, timeout=min(timeout, 25.0)
+        )
+        official_total = public_payload.get("total_inventory_count")
+        official_public_records = asset_records_from_public_payload(
+            public_payload, source="steam_public_contextid2"
+        )
+        official_returned = len(official_public_records)
+        sources["steam_public_contextid2"] = _sources_entry(
+            1, [official_returned], total_inventory_count=official_total
+        )
+    except SteamQueryError as exc:
+        errors.append(f"官方公开库存: {exc}")
+        sources["steam_public_contextid2"] = _sources_entry(1, [0], error=str(exc))
+
+    batch_records = asset_records_from_parsed_payload(list(batch_items), source="steamwebapi:batch")
+    sources["steamwebapi:batch"] = _sources_entry(
+        1,
+        [len(batch_records)],
+        provider_requests=batch_provider_requests,
+    )
+
+    public_records = localize_asset_records(
+        official_public_records,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 5.0),
+    )
+    protected_candidates, public_missing_candidates, excluded = classify_hidden_assets(
+        batch_records, public_records, batch_records, now=now
+    )
+    protected_candidates = localize_asset_records(
+        protected_candidates,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 5.0),
+    )
+    public_missing_candidates = localize_asset_records(
+        public_missing_candidates,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 5.0),
+    )
+
+    hidden_candidates = list(protected_candidates) + list(public_missing_candidates)
+    live_hidden, observed_hidden = apply_observation_cache(
+        steamid,
+        hidden_candidates,
+        {record.assetid for record in public_records},
+        cache_path=observation_cache_path,
+        now=now,
+    )
+    observed_hidden = localize_asset_records(
+        observed_hidden,
+        language=language,
+        cache_path=observation_cache_path,
+        timeout=min(timeout, 5.0),
+    )
+    live_protected = [record for record in live_hidden if record.protection_state == "active"]
+    live_public_missing = [record for record in live_hidden if record.protection_state != "active"]
+    observed_protected = [record for record in observed_hidden if record.protection_state == "active"]
+    observed_public_missing = [record for record in observed_hidden if record.protection_state != "active"]
+
+    protected_live_count = sum(record.amount for record in live_protected)
+    protected_observed_count = sum(record.amount for record in observed_protected)
+    public_missing_live_count = sum(record.amount for record in live_public_missing)
+    public_missing_observed_count = sum(record.amount for record in observed_public_missing)
+    public_count = sum(record.amount for record in public_records)
+    protected_total = protected_live_count + protected_observed_count
+    public_missing_total = public_missing_live_count + public_missing_observed_count
+    hidden_total = protected_total + public_missing_total
+    total_count = hidden_total + public_count
+
+    raw_assetids = [
+        record.assetid
+        for record in [*official_public_records, *batch_records]
+        if record.assetid
+    ]
+    dedupe = {
+        "observations_before_dedupe": len(raw_assetids),
+        "unique_assetids_after_dedupe": len(set(raw_assetids)),
+        "unique_public": len(public_records),
+        "unique_protected_live": len(live_protected),
+        "unique_protected_observed": len(observed_protected),
+        "unique_public_missing_live": len(live_public_missing),
+        "unique_public_missing_observed": len(observed_public_missing),
+    }
+
+    official_gap: Optional[Dict[str, int]] = None
+    if official_total is not None:
+        official_gap = {
+            "total_inventory_count": int(official_total),
+            "returned": official_returned,
+            "gap": max(0, int(official_total) - official_returned),
+        }
+
+    hidden_gap_candidates: List[Dict[str, Any]] = []
+    hidden_gap = 0
+    if official_gap is not None:
+        observed_hidden_ids = {record.assetid for record in live_hidden} | {record.assetid for record in observed_hidden}
+        hidden_gap = max(0, int(official_gap["gap"]) - len(observed_hidden_ids))
+        public_ids = {record.assetid for record in public_records}
+        account = _read_observation_cache(observation_cache_path).get(steamid) or {}
+        for assetid, row in sorted(account.items()):
+            if not isinstance(row, dict):
+                continue
+            if assetid in public_ids or assetid in observed_hidden_ids:
+                continue
+            if _int(row.get("expires_at"), 0) <= now:
+                continue
+            hidden_gap_candidates.append(
+                {
+                    "assetid": assetid,
+                    "name": _string(row.get("name") or "未知物品"),
+                    "protection_state": _string(row.get("protection_state")) or "unknown",
+                    "first_seen": row.get("first_seen"),
+                    "last_seen": row.get("last_seen"),
+                    "sources": row.get("sources") or [],
+                    "note": "SteamID 侧当前所有可访问数据源均未返回该资产，保护状态无法确认；可能仍处于交易保护。",
+                }
+            )
+
+    evidence_level = "medium" if official_public_records else "low"
+    coverage_status = "partial"
+    if errors and not public_records and not live_hidden:
+        coverage_status = "failed"
+    elif errors:
+        coverage_status = "degraded"
+
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    note = (
+        "轻量刷新：Steamwebapi batch 单次调用返回可见集，交易保护知识来自10天观测缓存，"
+        "由每日深度扫描多源交叉验证刷新。hidden_gap 为官方计数与已观测隐藏资产的差值。"
+    )
+    return {
+        "steamid": steamid,
+        "owner_view": False,
+        "protected_live": group_records_by_name(live_protected),
+        "protected_observed": group_records_by_name(observed_protected),
+        "public_missing_live": group_records_by_name(live_public_missing),
+        "public_missing_observed": group_records_by_name(observed_public_missing),
+        "unverified_protected": [],
+        "public": group_records_by_name(public_records),
+        "market_supplements": [],
+        "counts": {
+            "protected_live": protected_live_count,
+            "protected_observed": protected_observed_count,
+            "protected": protected_total,
+            "public_missing_live": public_missing_live_count,
+            "public_missing_observed": public_missing_observed_count,
+            "public_missing": public_missing_total,
+            "hidden": hidden_total,
+            "hidden_gap": hidden_gap,
+            "unverified": 0,
             "public": public_count,
             "total": total_count,
         },

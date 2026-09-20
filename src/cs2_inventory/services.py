@@ -27,6 +27,7 @@ from .localization import (
     queue_localization_job,
 )
 from .models import (
+    BEIJING_TIMEZONE,
     QuotaUsage,
     ScanJob,
     Snapshot,
@@ -342,19 +343,64 @@ def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
     return {"from_snapshot_id": previous.id if previous else None, "to_snapshot_id": current.id, "added": added, "removed": removed, "changed": changed}
 
 
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 def prune_expired() -> dict:
-    cutoff = utcnow() - timedelta(days=current_app.config["SNAPSHOT_RETENTION_DAYS"])
+    """分层保留：48 小时内全保留；更早的每个（目标, 北京自然日）只留当日最后一张；8 天整体截止。"""
+    now = _aware_utc(utcnow())
+    cutoff = now - timedelta(days=current_app.config["SNAPSHOT_RETENTION_DAYS"])
     protected = protected_snapshot_ids()
-    query = Snapshot.query.filter(Snapshot.scanned_at < cutoff)
-    if protected:
-        query = query.filter(Snapshot.id.not_in(protected))
-    snapshots = query.all()
-    expired_jobs = ScanJob.query.filter(ScanJob.expires_at.is_not(None), ScanJob.expires_at < utcnow()).all()
-    for row in snapshots + expired_jobs:
+    recent_cutoff = now - timedelta(hours=48)
+
+    expired_jobs = ScanJob.query.filter(ScanJob.expires_at.is_not(None), ScanJob.expires_at < now).all()
+
+    keep_ids: set[int] = set(protected)
+    stale_snapshots: list[Snapshot] = []
+    old_snapshot_ids: list[int] = [
+        row[0]
+        for row in db.session.query(Snapshot.id).filter(Snapshot.scanned_at < cutoff).all()
+    ]
+    target_ids = [
+        row[0]
+        for row in db.session.query(Snapshot.target_id).filter(Snapshot.scanned_at < recent_cutoff).distinct().all()
+    ]
+    for target_id in target_ids:
+        rows = (
+            Snapshot.query.filter(Snapshot.target_id == target_id, Snapshot.scanned_at < recent_cutoff)
+            .order_by(Snapshot.scanned_at.asc(), Snapshot.id.asc())
+            .all()
+        )
+        last_of_day: dict[str, Snapshot] = {}
+        for row in rows:
+            if row.id in old_snapshot_ids:
+                continue
+            local_day = _aware_utc(row.scanned_at).astimezone(BEIJING_TIMEZONE).date().isoformat()
+            last_of_day[local_day] = row
+        keep_ids.update(row.id for row in last_of_day.values())
+        # 48 小时至 8 天：仅保留每个（目标, 北京自然日）的最后一张。
+        stale_snapshots.extend(
+            row
+            for row in rows
+            if row.id not in keep_ids
+        )
+    # 超过 8 天整体截止：早于 cutoff 的行一律过期（受保护快照除外）。
+    expired_snapshots = [
+        row
+        for row in Snapshot.query.filter(Snapshot.id.in_(old_snapshot_ids)).all()
+        if row.id not in keep_ids
+    ]
+    seen_ids = {row.id for row in stale_snapshots}
+    stale_snapshots.extend(row for row in expired_snapshots if row.id not in seen_ids)
+
+    for row in stale_snapshots + expired_jobs:
         db.session.delete(row)
     db.session.commit()
     lifecycle = cleanup_lifecycle()
-    return {"snapshots": len(snapshots), "jobs": len(expired_jobs), "lifecycle": lifecycle}
+    return {"snapshots": len(stale_snapshots), "jobs": len(expired_jobs), "lifecycle": lifecycle}
 
 
 def billing_period_start(now: datetime | None = None) -> datetime:
@@ -403,7 +449,7 @@ def quota_status() -> dict:
             current_app.config["REQUESTS_PER_SCAN"]
             * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]
         ),
-        "scheduled_scans_per_day": 2,
+        "scheduled_scans_per_day": 6,
     }
 
 

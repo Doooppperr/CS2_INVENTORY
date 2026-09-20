@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta, timezone
+from typing import Any
 
 from flask import current_app
 
@@ -15,7 +16,11 @@ from . import inventory_engine
 from .app import create_app
 from .database import db
 from .entitlements import scan_job_eligible
-from .inventory_engine import run_max_coverage_query
+from .inventory_engine import (
+    fetch_steamwebapi_batch,
+    run_lightweight_query,
+    run_max_coverage_query,
+)
 from .localization import process_localization_job
 from .models import (
     LocalizationJob,
@@ -169,10 +174,37 @@ def claim_next_localization_job() -> int | None:
         return job.id
 
 
-def claim_next_work() -> tuple[str, int] | None:
+def claim_batch_group(max_ids: int = 20) -> list[int] | None:
+    """Claim up to max_ids queued daily_light jobs for one batched run."""
+    with _claim_lock:
+        jobs = (
+            ScanJob.query.filter_by(status="queued", kind="daily_light")
+            .order_by(ScanJob.created_at.asc(), ScanJob.id.asc())
+            .limit(max_ids)
+            .all()
+        )
+        if not jobs:
+            return None
+        job_ids = []
+        for job in jobs:
+            job.status = "running"
+            job.started_at = utcnow()
+            job_ids.append(job.id)
+            if job.target_id:
+                target = db.session.get(SteamTarget, job.target_id)
+                if target:
+                    target.scan_status = "scanning"
+        db.session.commit()
+        return job_ids
+
+
+def claim_next_work() -> tuple[str, Any] | None:
     scan_id = claim_next_job()
     if scan_id is not None:
         return ("scan", scan_id)
+    group_ids = claim_batch_group()
+    if group_ids is not None:
+        return ("scan_group", group_ids)
     localization_id = claim_next_localization_job()
     if localization_id is not None:
         return ("localization", localization_id)
@@ -286,6 +318,120 @@ def process_job(job_id: int) -> None:
         finish_batch(fresh.batch_id if fresh else None)
 
 
+def _finish_job(job_id: int, *, status: str, error: str | None = None) -> None:
+    """Mark a claimed job as failed without losing the target state update."""
+    job = db.session.get(ScanJob, job_id)
+    if not job:
+        return
+    job.status = status
+    if error:
+        job.error = error[:2000]
+    job.finished_at = utcnow()
+    if job.target_id:
+        target = db.session.get(SteamTarget, job.target_id)
+        if target:
+            target.scan_status = "failed" if status == "failed" else target.scan_status
+            if status == "failed":
+                target.last_error = job.error
+            target.last_scan_at = utcnow()
+    db.session.commit()
+
+
+def process_batch_group(job_ids: list[int]) -> None:
+    """Run one batched lightweight scan group: one batch call per 20 SteamIDs."""
+    jobs = [db.session.get(ScanJob, job_id) for job_id in job_ids]
+    jobs = [job for job in jobs if job is not None and job.status == "running"]
+    if not jobs:
+        return
+
+    steamids: list[str] = []
+    for job in jobs:
+        if job.steamid not in steamids:
+            steamids.append(job.steamid)
+
+    try:
+        inventory_engine.REQUEST_THROTTLE = RATE_LIMITER.acquire
+        items_by_steamid: dict[str, list] = {}
+        provider_requests = 0
+        for chunk_start in range(0, len(steamids), 20):
+            chunk = steamids[chunk_start:chunk_start + 20]
+            chunk_items, chunk_errors, chunk_attempts = fetch_steamwebapi_batch(
+                chunk,
+                key=current_app.config["STEAMWEBAPI_KEY"],
+                language=current_app.config["ITEM_LANGUAGE"],
+                timeout=120,
+            )
+            provider_requests += chunk_attempts
+            for error in chunk_errors:
+                print(f"[worker] batch error: {error}")
+            items_by_steamid.update(chunk_items)
+            if chunk_attempts:
+                db.session.add(
+                    QuotaUsage(
+                        endpoint="inventory",
+                        credits=chunk_attempts * current_app.config["INVENTORY_CREDITS_PER_REQUEST"],
+                        source="daily_light",
+                    )
+                )
+                db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        for job_id in job_ids:
+            _finish_job(job_id, status="failed", error=f"batch 请求失败: {exc}")
+        for job in jobs:
+            finish_batch(job.batch_id)
+        return
+
+    completed = []
+    for job in jobs:
+        job = db.session.get(ScanJob, job.id)
+        if job is None or job.status != "running":
+            continue
+        batch_items = items_by_steamid.get(job.steamid)
+        if batch_items is None:
+            _finish_job(job.id, status="failed", error="batch 响应缺少该 SteamID")
+            finish_batch(job.batch_id)
+            continue
+        try:
+            result = run_lightweight_query(
+                job.steamid,
+                batch_items,
+                key=current_app.config["STEAMWEBAPI_KEY"],
+                language=current_app.config["ITEM_LANGUAGE"],
+                timeout=120,
+                observation_cache_path=current_app.config["OBSERVATION_CACHE"],
+                batch_provider_requests=0,  # QuotaUsage per chunk is recorded by the group executor.
+            )
+            unified = unify_inventory(result)
+            if job.target_id:
+                target = db.session.get(SteamTarget, job.target_id)
+                if not target:
+                    raise RuntimeError("监控目标已删除")
+                if not target.persona_name or profile_refresh_due(
+                    target.profile_updated_at, days=current_app.config["PROFILE_REFRESH_DAYS"]
+                ):
+                    target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
+                    target.profile_updated_at = utcnow()
+                store_snapshot(target, unified)
+                job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
+            else:
+                job.result_json = json.dumps(
+                    public_payload(unified, scanned_at=beijing_iso(utcnow())),
+                    ensure_ascii=False,
+                )
+            job.status = "completed"
+            job.finished_at = utcnow()
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            _finish_job(job.id, status="failed", error=str(exc))
+        completed.append(job.id)
+
+    for job_id in completed:
+        fresh = db.session.get(ScanJob, job_id)
+        finish_batch(fresh.batch_id if fresh else None)
+
+
 def worker_loop(*, once: bool = False) -> None:
     app = create_app()
     with app.app_context():
@@ -308,14 +454,16 @@ def worker_loop(*, once: bool = False) -> None:
                 time.sleep(1 if futures else 3)
 
 
-def _process_work(kind: str, job_id: int) -> None:
+def _process_work(kind: str, job_id: Any) -> None:
     if kind == "scan":
         process_job(job_id)
+    elif kind == "scan_group":
+        process_batch_group(job_id)
     else:
         process_localization_job(job_id)
 
 
-def _process_with_context(app, kind: str, job_id: int) -> None:
+def _process_with_context(app, kind: str, job_id: Any) -> None:
     with app.app_context():
         _process_work(kind, job_id)
 
