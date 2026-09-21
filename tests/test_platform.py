@@ -380,36 +380,34 @@ class PlatformTests(unittest.TestCase):
                 job_ids.append(job.id)
             db.session.commit()
 
-            fake_items = {
-                target.steamid: [
-                    {"assetid": f"{index}", "classid": "100", "instanceid": "0",
-                     "market_hash_name": "Batch Item", "market_name": "Batch Item", "tradable": True}
-                    for index in range(2)
-                ]
-                for target in targets
-            }
             fake_result = {
                 "steamid": "any",
-                "public": [{"name": "Batch Item", "count": 2, "assetids": ["0", "1"], "sources": ["steamwebapi:batch"]}],
+                "public": [{"name": "Light Item", "count": 1, "assetids": ["0"], "sources": ["steamwebapi:parse=1:mode=1"]}],
+                "protected_live": [
+                    {"name": "Protected Item", "count": 1, "assetids": ["7"], "sources": ["steamwebapi:parse=1:mode=1"]},
+                ],
                 "coverage": {"status": "partial"}, "elapsed_ms": 5, "errors": [],
-                "sources": {"steamwebapi:batch": {"provider_requests": 0}},
+                "sources": {"steamwebapi:parse=1:mode=1": {"provider_requests": 1}},
             }
             from cs2_inventory.worker import claim_batch_group, process_batch_group
-            with mock.patch("cs2_inventory.worker.fetch_steamwebapi_batch", return_value=(fake_items, [], 1)) as fetch, \
-                    mock.patch("cs2_inventory.worker.run_lightweight_query", return_value=fake_result) as light:
+            with mock.patch("cs2_inventory.worker.run_lightweight_query", return_value=fake_result) as light:
                 claimed = claim_batch_group()
                 self.assertEqual(claimed, job_ids)
                 process_batch_group(claimed)
-                self.assertEqual(fetch.call_count, 1)
                 self.assertEqual(light.call_count, 3)
+                for call in light.call_list:
+                    self.assertTrue(call.kwargs.get("single_inventory"))
             db.session.expire_all()
             for job_id in job_ids:
                 job = db.session.get(ScanJob, job_id)
                 self.assertEqual(job.status, "completed")
-                self.assertIsNotNone(Snapshot.query.filter_by(target_id=job.target_id).first())
-            self.assertEqual(QuotaUsage.query.filter_by(source="daily_light").count(), 1)
-            usage = QuotaUsage.query.filter_by(source="daily_light").one()
-            self.assertEqual(usage.credits, 3)
+                snapshot = Snapshot.query.filter_by(target_id=job.target_id).first()
+                self.assertIsNotNone(snapshot)
+            protected_rows = SnapshotItem.query.filter_by(is_trade_protected=True).all()
+            self.assertEqual(len(protected_rows), 3)
+            self.assertEqual(QuotaUsage.query.filter_by(source="daily_light").count(), 3)
+            for usage in QuotaUsage.query.filter_by(source="daily_light").all():
+                self.assertEqual(usage.credits, 3)
             self.assertEqual(db.session.get(ScanBatch, batch.id).status, "completed")
 
     def test_worker_batch_group_failure_fails_jobs_without_snapshots(self):
@@ -427,7 +425,7 @@ class PlatformTests(unittest.TestCase):
                 job_ids.append(job.id)
             db.session.commit()
             from cs2_inventory.worker import claim_batch_group, process_batch_group
-            with mock.patch("cs2_inventory.worker.fetch_steamwebapi_batch", side_effect=RuntimeError("network down")):
+            with mock.patch("cs2_inventory.worker.run_lightweight_query", side_effect=RuntimeError("network down")):
                 claimed = claim_batch_group()
                 self.assertEqual(claimed, job_ids)
                 process_batch_group(claimed)
@@ -435,10 +433,12 @@ class PlatformTests(unittest.TestCase):
             for job_id in job_ids:
                 job = db.session.get(ScanJob, job_id)
                 self.assertEqual(job.status, "failed")
-                self.assertIn("batch 请求失败", job.error)
+                self.assertIn("network down", job.error)
+                self.assertIsNone(Snapshot.query.filter_by(target_id=job.target_id).first())
             self.assertEqual(db.session.get(ScanBatch, batch.id).status, "completed_with_errors")
 
-    def test_batch_group_missing_steamid_fails_single_job_only(self):
+    def test_batch_group_first_failure_does_not_block_remaining_jobs(self):
+        """单个目标扫描失败只影响该任务，其余任务照常完成并写入快照。"""
         with self.app.app_context():
             user = User.query.filter_by(username="cs2inventory_user").one()
             targets = [row.target for row in user.subscriptions][:2]
@@ -452,25 +452,30 @@ class PlatformTests(unittest.TestCase):
                 db.session.flush()
                 job_ids.append(job.id)
             db.session.commit()
-            # 只有第一个目标的 SteamID 出现在 batch 响应中
-            fake_items = {targets[0].steamid: []}
             fake_result = {
-                "steamid": targets[0].steamid,
-                "public": [{"name": "Solo Item", "count": 1, "assetids": ["9"], "sources": ["steamwebapi:batch"]}],
+                "steamid": "any",
+                "public": [{"name": "Solo Item", "count": 1, "assetids": ["9"], "sources": ["steamwebapi:parse=1:mode=1"]}],
                 "coverage": {"status": "partial"}, "elapsed_ms": 5, "errors": [],
-                "sources": {"steamwebapi:batch": {"provider_requests": 0}},
+                "sources": {"steamwebapi:parse=1:mode=1": {"provider_requests": 1}},
             }
             from cs2_inventory.worker import claim_batch_group, process_batch_group
-            with mock.patch("cs2_inventory.worker.fetch_steamwebapi_batch", return_value=(fake_items, [], 1)), \
-                    mock.patch("cs2_inventory.worker.run_lightweight_query", return_value=fake_result):
+
+            def flaky(steamid, *args, **kwargs):
+                if steamid == targets[0].steamid:
+                    raise RuntimeError("single inventory timeout")
+                return fake_result
+
+            with mock.patch("cs2_inventory.worker.run_lightweight_query", side_effect=flaky):
                 claimed = claim_batch_group()
                 self.assertEqual(claimed, job_ids)
                 process_batch_group(claimed)
             db.session.expire_all()
             first_job, second_job = (db.session.get(ScanJob, job_id) for job_id in job_ids)
-            self.assertEqual(first_job.status, "completed")
-            self.assertEqual(second_job.status, "failed")
-            self.assertIn("batch 响应缺少该 SteamID", second_job.error)
+            self.assertEqual(first_job.status, "failed")
+            self.assertIn("single inventory timeout", first_job.error)
+            self.assertEqual(second_job.status, "completed")
+            self.assertIsNotNone(Snapshot.query.filter_by(target_id=second_job.target_id).first())
+            self.assertIsNone(Snapshot.query.filter_by(target_id=first_job.target_id).first())
             self.assertEqual(db.session.get(ScanBatch, batch.id).status, "completed_with_errors")
 
     def test_same_asset_language_change_is_canonicalized_and_not_reported(self):

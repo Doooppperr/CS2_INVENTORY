@@ -51,7 +51,8 @@ def enqueue_daily(*, now: datetime | None = None) -> dict:
         existing = ScanBatch.query.filter_by(slot_key=slot_key).one()
         return {"batch_id": existing.id, "jobs": existing.total_jobs, "existing": True, "slot_key": slot_key}
     for target in targets:
-        # R2 窗口（08:00-11:59）走深度多源扫描，其余槽位走 batch 轻量路径。
+        # R2 窗口（08:00-11:59）走深度多源扫描，其余槽位走单库存轻量路径
+        # （parse=1 + try_first_seven_days_blocked_items=1，可直接发现交易保护中的新物品）。
         job_kind = "daily" if slot_key.endswith("-R2") else "daily_light"
         db.session.add(ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind=job_kind))
         target.scan_status = "queued"

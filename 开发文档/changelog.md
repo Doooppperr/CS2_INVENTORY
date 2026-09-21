@@ -1,5 +1,14 @@
 # 变更记录
 
+## 1.4.1 - 2026-09-21
+
+- 轻量轮从 batch 端点改为每目标一次单库存端点请求（`parse=1` + `try_first_seven_days_blocked_items=1` + `no_cache=1`）：无需登录态即可发现处于交易保护中的新获得物品，新增交易保护物品的感知延迟从最长 4 小时深度轮间隔缩短至任意轻量轮次。
+- `tradeprotectedmaxdays` 解析为保护截止时间上界（显式 timestamp 优先），保护物品在轻量轮即进入 `protected_live` 组并随快照落库。
+- Worker 批量组重写为逐 ID 单库存调用：单库存端点失败按任务隔离（coverage=degraded 不阻塞组内其余任务），每任务一条 QuotaUsage(source="daily_light", credits=3)。
+- 额度模型更新为深度轮 21×N + 轻量轮 3×N×5：百目标日耗约 3,600 credits、账期约 111,600 credits。
+- 测试修复：run_lightweight_query 相关测试全部改用临时目录观测缓存，消除对 `src/cs2_inventory/inventory_observations.json` 的跨运行污染（该文件已加入 .gitignore）。
+- 本版本无数据库迁移。
+
 ## 1.4.0 - 2026-09-20
 
 - 定时扫描提频为每日 6 轮（北京时间 00/04/08/12/16/20 点，槽键 `{日期}-R0..R5`），通知延迟上限从 12 小时降至 4 小时。

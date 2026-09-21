@@ -17,7 +17,6 @@ from .app import create_app
 from .database import db
 from .entitlements import scan_job_eligible
 from .inventory_engine import (
-    fetch_steamwebapi_batch,
     run_lightweight_query,
     run_max_coverage_query,
 )
@@ -338,71 +337,35 @@ def _finish_job(job_id: int, *, status: str, error: str | None = None) -> None:
 
 
 def process_batch_group(job_ids: list[int]) -> None:
-    """Run one batched lightweight scan group: one batch call per 20 SteamIDs."""
+    """Run one lightweight scan group: one single-inventory request per SteamID.
+
+    Each job calls the single-inventory endpoint with parse=1 +
+    try_first_seven_days_blocked_items=1 + no_cache=1 so trade-protected
+    items are visible without a login session. Failures are isolated per job.
+    """
     jobs = [db.session.get(ScanJob, job_id) for job_id in job_ids]
     jobs = [job for job in jobs if job is not None and job.status == "running"]
     if not jobs:
         return
 
-    steamids: list[str] = []
-    for job in jobs:
-        if job.steamid not in steamids:
-            steamids.append(job.steamid)
-
-    try:
-        inventory_engine.REQUEST_THROTTLE = RATE_LIMITER.acquire
-        items_by_steamid: dict[str, list] = {}
-        provider_requests = 0
-        for chunk_start in range(0, len(steamids), 20):
-            chunk = steamids[chunk_start:chunk_start + 20]
-            chunk_items, chunk_errors, chunk_attempts = fetch_steamwebapi_batch(
-                chunk,
-                key=current_app.config["STEAMWEBAPI_KEY"],
-                language=current_app.config["ITEM_LANGUAGE"],
-                timeout=120,
-            )
-            provider_requests += chunk_attempts
-            for error in chunk_errors:
-                print(f"[worker] batch error: {error}")
-            items_by_steamid.update(chunk_items)
-            if chunk_attempts:
-                db.session.add(
-                    QuotaUsage(
-                        endpoint="inventory",
-                        credits=chunk_attempts * current_app.config["INVENTORY_CREDITS_PER_REQUEST"],
-                        source="daily_light",
-                    )
-                )
-                db.session.commit()
-    except Exception as exc:
-        db.session.rollback()
-        for job_id in job_ids:
-            _finish_job(job_id, status="failed", error=f"batch 请求失败: {exc}")
-        for job in jobs:
-            finish_batch(job.batch_id)
-        return
-
+    inventory_engine.REQUEST_THROTTLE = RATE_LIMITER.acquire
     completed = []
     for job in jobs:
         job = db.session.get(ScanJob, job.id)
         if job is None or job.status != "running":
             continue
-        batch_items = items_by_steamid.get(job.steamid)
-        if batch_items is None:
-            _finish_job(job.id, status="failed", error="batch 响应缺少该 SteamID")
-            finish_batch(job.batch_id)
-            continue
         try:
             result = run_lightweight_query(
                 job.steamid,
-                batch_items,
                 key=current_app.config["STEAMWEBAPI_KEY"],
                 language=current_app.config["ITEM_LANGUAGE"],
                 timeout=120,
                 observation_cache_path=current_app.config["OBSERVATION_CACHE"],
-                batch_provider_requests=0,  # QuotaUsage per chunk is recorded by the group executor.
+                single_inventory=True,
             )
             unified = unify_inventory(result)
+            credits = estimate_inventory_credits(result)
+            db.session.add(QuotaUsage(endpoint="inventory", credits=credits, source="daily_light"))
             if job.target_id:
                 target = db.session.get(SteamTarget, job.target_id)
                 if not target:

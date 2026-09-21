@@ -451,11 +451,17 @@ def _steamwebapi_assetid(item: Mapping[str, Any]) -> str:
     return ""
 
 
-def _steamwebapi_protected_until(item: Mapping[str, Any]) -> int:
+def _steamwebapi_protected_until(item: Mapping[str, Any], *, now: int | None = None) -> int:
+    """Explicit protection timestamps win; otherwise tradeprotectedmaxdays converts to a conservative upper bound."""
     for key in ("tradeprotecteduntiltimestamp", "tradeprotected_until_timestamp", "tradeblockuntil", "tradable_after_timestamp"):
         value = _int(item.get(key), 0)
         if value > 0:
             return value
+    for key in ("tradeprotectedmaxdays", "tradeprotected_max_days", "trade_protected_max_days"):
+        days = _int(item.get(key), 0)
+        if days > 0:
+            base = now if now is not None else int(time.time())
+            return base + days * 86400
     return 0
 
 
@@ -471,7 +477,7 @@ def steamwebapi_items_from_payload(payload: Any, *, now: int | None = None) -> T
         amount = _steamwebapi_amount(item)
         assetid = _steamwebapi_assetid(item)
         is_protected = _steamwebapi_bool(item, "tradeprotected", "trade_protected")
-        protected_until = _steamwebapi_protected_until(item)
+        protected_until = _steamwebapi_protected_until(item, now=now)
         if protected_until > now:
             is_protected = True
         if is_protected:
@@ -575,13 +581,15 @@ def asset_records_from_raw_payload(payload: Any, *, source: str) -> List[AssetRe
     return records
 
 
-def asset_records_from_parsed_payload(payload: Any, *, source: str) -> List[AssetRecord]:
+def asset_records_from_parsed_payload(payload: Any, *, source: str, now: int | None = None) -> List[AssetRecord]:
     """Convert a parse=1 Steamwebapi item list into AssetRecord rows.
 
     parse=1 is untrusted for asset identity: sticker/attachment metadata can appear
     as independent rows, so callers must cross-check against the official public
     inventory before treating any row as protected.
     """
+    if now is None:
+        now = int(time.time())
     records: List[AssetRecord] = []
     for item in _iter_steamwebapi_items(payload):
         assetid = _steamwebapi_assetid(item)
@@ -599,7 +607,7 @@ def asset_records_from_parsed_payload(payload: Any, *, source: str) -> List[Asse
                 appid=str(APPID_CS2),
                 tradeprotected=_steamwebapi_bool(item, "tradeprotected", "trade_protected"),
                 tradelocked=_steamwebapi_bool(item, "tradelocked", "trade_locked"),
-                protected_until=_steamwebapi_protected_until(item),
+                protected_until=_steamwebapi_protected_until(item, now=now),
                 sources=(source,),
             )
         )
@@ -2346,7 +2354,7 @@ def run_max_coverage_query(
             label="steamwebapi:parse=1:mode=2",
         )
         for page in parsed_fetch.pages:
-            parsed_records.extend(asset_records_from_parsed_payload(page.payload, source=page.source))
+            parsed_records.extend(asset_records_from_parsed_payload(page.payload, source=page.source, now=now))
         sources["steamwebapi:parse=1:mode=2"] = _sources_entry(
             len(parsed_fetch.pages),
             parsed_fetch.upstream_item_counts,
@@ -2631,7 +2639,7 @@ def run_max_coverage_query(
 
 def run_lightweight_query(
     steamid: str,
-    batch_items: Sequence[Mapping[str, Any]],
+    batch_items: Optional[Sequence[Mapping[str, Any]]] = None,
     *,
     key: Optional[str] = None,
     language: str = DEFAULT_LANGUAGE,
@@ -2639,13 +2647,17 @@ def run_lightweight_query(
     observation_cache_path: Optional[str] = None,
     now: Optional[int] = None,
     batch_provider_requests: int = 0,
+    single_inventory: bool = False,
 ) -> Dict[str, Any]:
-    """Lightweight refresh from a pre-fetched batch payload plus the public inventory.
+    """Lightweight refresh that can see trade-protected items.
 
-    Mirrors the run_max_coverage_query result shape so unify_inventory consumes
-    both identically. The Steamwebapi batch endpoint shares the per-request
-    rate window but returns parse=1 rows only; trade-protected knowledge lives
-    in the 10-day observation cache and is refreshed by the daily deep scan.
+    single_inventory=True fetches the single-inventory endpoint once with
+    parse=1 + try_first_seven_days_blocked_items=1 + no_cache=1 (mode "1":
+    trading inventory first, falling back to the normal inventory), which
+    returns trade-locked items without a login session. Otherwise (or when
+    pre-fetched batch_items are given) the legacy batch parse=1 payload is
+    used. Both paths mirror the run_max_coverage_query result shape so
+    unify_inventory consumes them identically.
     """
     if now is None:
         now = int(time.time())
@@ -2674,12 +2686,41 @@ def run_lightweight_query(
         errors.append(f"官方公开库存: {exc}")
         sources["steam_public_contextid2"] = _sources_entry(1, [0], error=str(exc))
 
-    batch_records = asset_records_from_parsed_payload(list(batch_items), source="steamwebapi:batch")
-    sources["steamwebapi:batch"] = _sources_entry(
-        1,
-        [len(batch_records)],
-        provider_requests=batch_provider_requests,
-    )
+    classification_records: List[AssetRecord]
+    if single_inventory and batch_items is None:
+        single_fetch = fetch_steamwebapi_raw_inventory(
+            steamid,
+            key=key or "",
+            mode="1",
+            parse="1",
+            language=language,
+            no_cache="1",
+            samples=1,
+            timeout=timeout,
+            label="steamwebapi:parse=1:mode=1",
+        )
+        classification_records = []
+        for page in single_fetch.pages:
+            classification_records.extend(
+                asset_records_from_parsed_payload(page.payload, source=page.source, now=now)
+            )
+        sources["steamwebapi:parse=1:mode=1"] = _sources_entry(
+            len(single_fetch.pages),
+            single_fetch.upstream_item_counts,
+            error="；".join(single_fetch.errors),
+            provider_requests=single_fetch.request_attempts,
+        )
+        errors.extend(single_fetch.errors)
+    else:
+        classification_records = asset_records_from_parsed_payload(
+            list(batch_items or []), source="steamwebapi:batch", now=now
+        )
+        sources["steamwebapi:batch"] = _sources_entry(
+            1,
+            [len(classification_records)],
+            provider_requests=batch_provider_requests,
+        )
+    batch_records = classification_records
 
     public_records = localize_asset_records(
         official_public_records,
@@ -2790,8 +2831,10 @@ def run_lightweight_query(
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     note = (
-        "轻量刷新：Steamwebapi batch 单次调用返回可见集，交易保护知识来自10天观测缓存，"
-        "由每日深度扫描多源交叉验证刷新。hidden_gap 为官方计数与已观测隐藏资产的差值。"
+        "轻量刷新：单库存端点 parse=1 + try_first_seven_days_blocked_items=1 + no_cache=1，"
+        "可直接发现处于交易保护中的新获得物品；公开集由 Steam 官方接口交叉验证，"
+        "历史保护知识由10天观测缓存补全，每日深度轮（R2）多源复核。"
+        "hidden_gap 为官方计数与已观测隐藏资产的差值。"
     )
     return {
         "steamid": steamid,

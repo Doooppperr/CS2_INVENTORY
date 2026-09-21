@@ -12,6 +12,7 @@ from cs2_inventory.inventory_engine import (
     CONTEXTID_CS2,
     TRADE_PROTECTION_SECONDS,
     AssetRecord,
+    _steamwebapi_protected_until,
     apply_observation_cache,
     apply_hidden_budget,
     asset_records_from_parsed_payload,
@@ -718,6 +719,47 @@ class MaxCoverageTests(unittest.TestCase):
         self.assertTrue(records[0].tradeprotected)
         self.assertTrue(records[0].tradelocked)
 
+    def test_parsed_payload_converts_maxdays_to_upper_bound(self):
+        now = 1_800_000_000
+        payload = [
+            {
+                "markethashname": "AK-47 | Redline (Field-Tested)",
+                "assetid": "max1",
+                "classid": "c1",
+                "count": 1,
+                "tradeprotectedmaxdays": 5,
+            }
+        ]
+        records = asset_records_from_parsed_payload(payload, source="fixture", now=now)
+        self.assertEqual(records[0].protected_until, now + 5 * 86400)
+        self.assertFalse(records[0].tradeprotected)
+
+    def test_explicit_protection_timestamp_beats_maxdays(self):
+        now = 1_800_000_000
+        item = {
+            "tradeprotecteduntiltimestamp": now + 3600,
+            "tradeprotectedmaxdays": 7,
+        }
+        self.assertEqual(_steamwebapi_protected_until(item, now=now), now + 3600)
+        item_maxdays_only = {"tradeprotectedmaxdays": 3}
+        self.assertEqual(_steamwebapi_protected_until(item_maxdays_only, now=now), now + 3 * 86400)
+        self.assertEqual(_steamwebapi_protected_until({}, now=now), 0)
+
+    def test_steamwebapi_items_flag_protected_when_maxdays_expires_in_future(self):
+        now = 1_800_000_000
+        payload = [
+            {
+                "markethashname": "Glock-18 | Fade (Factory New)",
+                "assetid": "g1",
+                "count": 1,
+                "tradeprotectedmaxdays": 2,
+            }
+        ]
+        result = steamwebapi_items_from_payload(payload, now=now)
+        self.assertEqual(len(result.protected_items), 1)
+        self.assertEqual(result.protected_items[0].protected_until, now + 2 * 86400)
+        self.assertEqual(result.visible_items, [])
+
 
 class BatchQueryTests(unittest.TestCase):
     def _batch_response(self, mapping):
@@ -785,6 +827,9 @@ class BatchQueryTests(unittest.TestCase):
             fetch_steamwebapi_batch(ids, key="fake-key", timeout=10)
 
     def test_run_lightweight_query_splits_public_and_missing(self):
+        import tempfile
+        from pathlib import Path
+
         public_payload = {
             "assets": [{"appid": "730", "contextid": "2", "assetid": "pub-1", "classid": "c1", "instanceid": "0"}],
             "descriptions": [
@@ -799,14 +844,17 @@ class BatchQueryTests(unittest.TestCase):
             # hid-1 只在 batch 出现 → 归入保护/缺失通道
             {"markethashname": "Hidden Skin", "assetid": "hid-1", "classid": "c2", "count": 1, "tradeprotected": True},
         ]
-        with mock.patch("cs2_inventory.inventory_engine.fetch_public_inventory", return_value=public_payload):
-            result = run_lightweight_query(
-                "76561198000000000",
-                batch_items,
-                key="fake-key",
-                language="schinese",
-                timeout=10,
-            )
+        with tempfile.TemporaryDirectory() as directory:
+            cache = str(Path(directory) / "obs.json")
+            with mock.patch("cs2_inventory.inventory_engine.fetch_public_inventory", return_value=public_payload):
+                result = run_lightweight_query(
+                    "76561198000000000",
+                    batch_items,
+                    key="fake-key",
+                    language="schinese",
+                    timeout=10,
+                    observation_cache_path=cache,
+                )
         public_names = {row["name"] for row in result["public"]}
         self.assertIn("Public Skin", public_names)
         protected_names = {row["name"] for row in (result["protected_live"] + result["protected_observed"] + result["public_missing_live"] + result["public_missing_observed"])}
@@ -814,6 +862,124 @@ class BatchQueryTests(unittest.TestCase):
         self.assertEqual(result["counts"]["total"], 2)
         self.assertIn("steam_public_contextid2", result["sources"])
         self.assertIn("steamwebapi:batch", result["sources"])
+
+    def test_run_lightweight_single_inventory_uses_parse1_mode1_no_cache(self):
+        import tempfile
+        from pathlib import Path
+
+        now = 1_800_000_000
+        public_payload = {
+            "assets": [{"appid": "730", "contextid": "2", "assetid": "pub-1", "classid": "c1", "instanceid": "0"}],
+            "descriptions": [
+                {"appid": "730", "contextid": "2", "classid": "c1", "instanceid": "0", "market_hash_name": "Public Skin"}
+            ],
+            "total_inventory_count": 2,
+            "success": 1,
+        }
+        single_payload = [
+            # pub-1 同时出现在公开集 → 可见资产
+            {"markethashname": "Public Skin", "assetid": "pub-1", "classid": "c1", "count": 1},
+            # prot-1 只在单库存端点出现且带保护证据 → 保护通道
+            {
+                "markethashname": "New Locked Skin",
+                "assetid": "prot-1",
+                "classid": "c9",
+                "count": 1,
+                "tradeprotected": True,
+                "tradeprotectedmaxdays": 4,
+            },
+        ]
+
+        class FakeSingleFetch:
+            def __init__(self):
+                self.pages = [
+                    RawInventoryPage(
+                        source="steamwebapi:parse=1:mode=1:sample=1:page=1",
+                        payload=single_payload,
+                        item_count=len(single_payload),
+                        total_inventory_count=2,
+                        last_assetid="",
+                        duration_ms=1,
+                    )
+                ]
+                self.upstream_item_counts = [len(single_payload)]
+                self.sources = [self.pages[0].source]
+                self.total_inventory_counts = [2]
+                self.errors = []
+                self.request_attempts = 1
+
+        captured = {}
+
+        def fake_single(steamid, **kwargs):
+            captured.update(kwargs)
+            return FakeSingleFetch()
+
+        with mock.patch("cs2_inventory.inventory_engine.fetch_public_inventory", return_value=public_payload), \
+                mock.patch("cs2_inventory.inventory_engine.fetch_steamwebapi_raw_inventory", side_effect=fake_single) as raw:
+            with tempfile.TemporaryDirectory() as directory:
+                cache = str(Path(directory) / "obs.json")
+                result = run_lightweight_query(
+                    "76561198000000000",
+                    key="fake-key",
+                    language="english",
+                    timeout=10,
+                    single_inventory=True,
+                    now=now,
+                    observation_cache_path=cache,
+                )
+        self.assertEqual(raw.call_count, 1)
+        self.assertEqual(captured.get("mode"), "1")
+        self.assertEqual(captured.get("parse"), "1")
+        self.assertEqual(captured.get("no_cache"), "1")
+        self.assertEqual(result["counts"]["protected_live"], 1)
+        self.assertEqual(result["protected_live"][0]["name"], "New Locked Skin")
+        self.assertEqual(result["sources"]["steamwebapi:parse=1:mode=1"]["provider_requests"], 1)
+        self.assertNotIn("steamwebapi:batch", result["sources"])
+        self.assertEqual(result["coverage"]["status"], "partial")
+
+    def test_run_lightweight_single_inventory_degrades_without_killing_result(self):
+        import tempfile
+        from pathlib import Path
+
+        public_payload = {
+            "assets": [{"appid": "730", "contextid": "2", "assetid": "pub-1", "classid": "c1", "instanceid": "0"}],
+            "descriptions": [
+                {"appid": "730", "contextid": "2", "classid": "c1", "instanceid": "0", "market_hash_name": "Public Skin"}
+            ],
+            "total_inventory_count": 1,
+            "success": 1,
+        }
+
+        class FakeFailedFetch:
+            def __init__(self):
+                self.pages = []
+                self.upstream_item_counts = []
+                self.sources = []
+                self.total_inventory_counts = []
+                self.errors = ["steamwebapi:parse=1:mode=1:sample=1:page=1: HTTP 502"]
+                self.request_attempts = 1
+
+        with mock.patch("cs2_inventory.inventory_engine.fetch_public_inventory", return_value=public_payload), \
+                mock.patch(
+                    "cs2_inventory.inventory_engine.fetch_steamwebapi_raw_inventory",
+                    return_value=FakeFailedFetch(),
+                ):
+            with tempfile.TemporaryDirectory() as directory:
+                cache = str(Path(directory) / "obs.json")
+                result = run_lightweight_query(
+                    "76561198000000000",
+                    key="fake-key",
+                    language="english",
+                    timeout=10,
+                    single_inventory=True,
+                    observation_cache_path=cache,
+                )
+        # 单库存端点失败但官方公开集可用 → degraded 而非 failed
+        self.assertEqual(result["coverage"]["status"], "degraded")
+        self.assertTrue(any("HTTP 502" in message for message in result["errors"]))
+        self.assertEqual(result["sources"]["steamwebapi:parse=1:mode=1"]["provider_requests"], 1)
+        public_names = {row["name"] for row in result["public"]}
+        self.assertIn("Public Skin", public_names)
 
 
 if __name__ == "__main__":
