@@ -132,10 +132,14 @@ def refresh_official_usage() -> dict:
 
 def estimate_inventory_credits(result: dict) -> int:
     requests = 0
+    has_attempt_counts = False
     for value in (result.get("sources") or {}).values():
-        if isinstance(value, dict):
+        if isinstance(value, dict) and "provider_requests" in value:
+            has_attempt_counts = True
             requests += int(value.get("provider_requests", 0) or 0)
-    return (requests * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]) or (
+    if has_attempt_counts:
+        return requests * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]
+    return (
         current_app.config["REQUESTS_PER_SCAN"]
         * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]
     )
@@ -143,7 +147,12 @@ def estimate_inventory_credits(result: dict) -> int:
 
 def claim_next_job() -> int | None:
     with _claim_lock:
-        job = ScanJob.query.filter_by(status="queued").order_by(ScanJob.created_at.asc(), ScanJob.id.asc()).first()
+        # 轻量任务必须留给 claim_batch_group，否则会误走七请求深度路径。
+        job = (
+            ScanJob.query.filter(ScanJob.status == "queued", ScanJob.kind != "daily_light")
+            .order_by(ScanJob.created_at.asc(), ScanJob.id.asc())
+            .first()
+        )
         if not job:
             return None
         job.status = "running"
@@ -237,6 +246,9 @@ def finish_batch(batch_id: int | None) -> None:
 def process_job(job_id: int) -> None:
     job = db.session.get(ScanJob, job_id)
     if not job:
+        return
+    if job.kind == "daily_light":
+        process_batch_group([job.id])
         return
     if not scan_job_eligible(job):
         job.status = "cancelled"
@@ -353,6 +365,10 @@ def process_batch_group(job_ids: list[int]) -> None:
     for job in jobs:
         job = db.session.get(ScanJob, job.id)
         if job is None or job.status != "running":
+            continue
+        if not scan_job_eligible(job):
+            _finish_job(job.id, status="cancelled", error="监控账号权益已到期")
+            completed.append(job.id)
             continue
         try:
             result = run_lightweight_query(

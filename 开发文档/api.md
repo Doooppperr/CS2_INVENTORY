@@ -40,3 +40,7 @@
 # 账号与分页约定（2026-08-19）
 
 账号管理不提供停用或恢复语义。删除成功返回 `ok`、`deleted_user_id` 和 `deleted_targets`。监控、管理员用户、管理员目标三个列表接口均规范化 `page`，前端通过 `view`、`section`、`page`、`user_page`、`target_page` 保存导航状态。
+
+## 扫描预算状态（2026-10-14）
+
+`quota` 新增 `billing_period_start`（北京时间）、`billing_period_source`（`provider_subscription` 或 `legacy_25th_estimate`）、`scheduled_scan_hours_beijing=[8,20]`、`estimated_scheduled_credits_per_target_day=24`。`scheduled_scans_per_day=2`。每日本地用量按北京时间零点统计；账期优先采用有效的供应商订阅区间，缺失/异常/过期时回退原每月 25 日估算，界面明确标记。本地余额始终为保守估算，未改写历史账本。

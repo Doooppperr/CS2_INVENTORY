@@ -10,10 +10,10 @@ TLS：新域名使用独立 Certbot webroot 证书，certbot.timer 自动续期�
 
 - `cs2-inventory-web.service`：Gunicorn Web 服务。
 - `cs2-inventory-worker.service`：两个并发槽的扫描任务处理器。
-- `cs2-inventory-schedule.timer`：北京时间每天 00/04/08/12/16/20 点建立扫描批次（6 轮）。
+- `cs2-inventory-schedule.timer`：北京时间每天 08:00、20:00 建立扫描批次（2 轮）。
 - `cs2-inventory-cleanup.timer`：每 15 分钟清理超过正式客户付费宽限期的监控数据。
 
-批次运行期间普通用户只读，管理员仍可管理。批次使用北京时间日期与窗口序号槽键（`{日期}-R0..R5`）防止重复入队；R2 为深度轮，其余 5 轮为单库存轻量轮（每目标一次 `parse=1` + `try_first_seven_days_blocked_items=1` 请求，可直接发现交易保护中的新物品）；多个批次重叠时，Worker 等全部定时批次完成后再解除维护并清理过期快照。快照分层保留：48 小时内全保留，其后每个（目标, 北京自然日）只留当日最后一张，整体保留 8 天。
+批次运行期间普通用户只读，管理员仍可管理。批次沿用 `{日期}-R2`（08:00 深度）与 `{日期}-R5`（20:00 轻量）槽键防止重复入队；08:00 前补触发直接跳过；R2 为深度轮，R5 为单库存轻量轮（每目标一次 `parse=1` + `try_first_seven_days_blocked_items=1` 请求，可直接发现交易保护中的新物品）；多个批次重叠时，Worker 等全部定时批次完成后再解除维护并清理过期快照。快照分层保留：48 小时内全保留，其后每个（目标, 北京自然日）只留当日最后一张，整体保留 8 天。
 
 ## 常用检查
 
@@ -37,3 +37,7 @@ sudo -u cs2inventory env PYTHONPATH=/opt/cs2-inventory/current/src CS2_STATE_DIR
 - 发布后第 15 分钟首次补译；失败后约第 1 小时和第 6 小时重试，第三次仍失败则记录为 `failed`。
 - `localization-report` 永远只读；`repair-localized-names --apply` 在一次数据库事务中更新名称、重算 `item_types` 并重建压缩载荷。
 - 历史修复只采用官方缓存或同一 assetid 的可信简中历史，不猜译未知名称。
+
+## 额度排查
+
+先对照供应商 `/account/me` 的 `package`、`subscriptionstart`、`subscriptionuntil` 和最近扣费，再检查 `quota_usage` 按 `source` 的平均 credits。单页无重试时，`daily_light` 应为 3，而非约 21。供应商 `month` 是自然月统计，不是订阅账期余额；本地保守记账包含失败尝试，不等于真实扣款。后台展示实际采用的账期起点及回退来源。

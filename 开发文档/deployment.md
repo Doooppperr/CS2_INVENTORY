@@ -1,4 +1,17 @@
-# 部署（当前规范：2026-09-15，1.3.2）
+# 部署（当前规范：2026-10-14，1.4.2）
+
+## 额度修复与双轮发布（2026-10-14）
+
+1. 核对线上 current、供应商套餐/订阅区间、近日日账本与任务分流。必要时暂时停止 schedule.timer，避免发布期间新增高消耗批次；保留网站及业务数据。
+2. 执行完整 unittest、Ruff、`git diff --check`；新增测试必须经过 `claim_next_work` → `_process_work` 验证轻量任务仅调用单库存查询，并保留交易保护标签。
+3. 保存旧提交归档与 SHA256、差异、基线和修复测试证据；在独立副本反向应用差异并验证原文件哈希及原行为。禁止在生产环境演练数据库恢复。
+4. 仅提交本次修复文件，推送 main；用同一完整提交 SHA 生成归档并比对本地/服务器 SHA256。
+5. 执行 `deploy/release.sh <归档> <完整SHA> --no-migrations`。沿用发布前 SQLite backup API 与完整性检查，不执行迁移；脚本安装两条 OnCalendar 并 daemon-reload。
+6. 核对 Web、Worker、两个 timer active/enabled；schedule.timer 仅含北京时间 08:00 与 20:00。检查现有用户、目标、订阅数据保持，current/GitHub/本地 SHA 一致，HTTPS /ready 正常；HealthDoc 进程保持原状态。
+7. 正常恢复无需人工补扫全量库存；R2/R5 与旧槽键兼容，零点至 08:00 补触发不建立扫描任务。必要的单目标验证只调用轻量查询，并单独记录其额外请求。
+8. 正式回退采用 `deploy/rollback.sh <旧release> <pre-deploy备份> --code-only`，不覆盖实时数据库；注意旧版本 timer 为六轮且包含高消耗分流缺陷，仅在新版异常时使用。
+
+以下旧发布章节作为历史记录，不代表当前扫描频率。
 
 ## 单库存轻量轮发布（2026-09-21）
 

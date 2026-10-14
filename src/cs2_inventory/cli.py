@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
 
@@ -9,24 +9,17 @@ from .app import create_app
 from .database import db
 from .entitlements import cleanup_lifecycle, target_daily_eligible
 from .localization import repair_retained_snapshots
-from .models import BEIJING_TIMEZONE, ScanBatch, ScanJob, SteamTarget, utcnow
+from .models import ScanBatch, ScanJob, SteamTarget, utcnow
+from .scheduling import SCHEDULED_ROUNDS, scheduled_slot_key
 from .services import prune_expired, state_set
 from .worker import refresh_official_usage, worker_loop
-
-
-def scheduled_slot_key(now: datetime | None = None) -> str:
-    """北京时间六窗口槽键：00/04/08/12/16/20 点起各 4 小时一轮（R0-R5），无跨日回退。"""
-    value = now or utcnow()
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    local = value.astimezone(BEIJING_TIMEZONE)
-    round_index = local.hour // 4
-    return f"{local.date().isoformat()}-R{round_index}"
 
 
 def enqueue_daily(*, now: datetime | None = None) -> dict:
     cleanup_lifecycle()
     slot_key = scheduled_slot_key(now)
+    if slot_key is None:
+        return {"jobs": 0, "skipped": True, "slot_key": None, "reason": "北京时间 08:00 前不补扫"}
     existing = ScanBatch.query.filter_by(slot_key=slot_key).first()
     if existing:
         return {"batch_id": existing.id, "jobs": existing.total_jobs, "existing": True, "slot_key": slot_key}
@@ -51,9 +44,9 @@ def enqueue_daily(*, now: datetime | None = None) -> dict:
         existing = ScanBatch.query.filter_by(slot_key=slot_key).one()
         return {"batch_id": existing.id, "jobs": existing.total_jobs, "existing": True, "slot_key": slot_key}
     for target in targets:
-        # R2 窗口（08:00-11:59）走深度多源扫描，其余槽位走单库存轻量路径
+        # 08:00 深度多源扫描，20:00 单库存轻量扫描。
         # （parse=1 + try_first_seven_days_blocked_items=1，可直接发现交易保护中的新物品）。
-        job_kind = "daily" if slot_key.endswith("-R2") else "daily_light"
+        job_kind = next(kind for _, suffix, kind in SCHEDULED_ROUNDS if slot_key.endswith(f"-{suffix}"))
         db.session.add(ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind=job_kind))
         target.scan_status = "queued"
     if targets:

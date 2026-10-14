@@ -39,6 +39,7 @@ from .models import (
     beijing_iso,
     utcnow,
 )
+from .scheduling import SCHEDULED_ROUNDS
 from .unified import evidence_json, public_payload
 
 STEAMID_RE = re.compile(r"^7656119\d{10}$")
@@ -413,11 +414,28 @@ def billing_period_start(now: datetime | None = None) -> datetime:
     return datetime(year, month, 25, tzinfo=timezone.utc)
 
 
+def effective_billing_period(now: datetime) -> tuple[datetime, str]:
+    """优先采用供应商有效订阅起点；自然月 month 字段不是账期扣费。"""
+    try:
+        official = json.loads(state_get("official_quota_json", "{}"))
+        payload = official.get("payload") if isinstance(official, dict) and official.get("available") else None
+        if isinstance(payload, dict):
+            start = datetime.fromisoformat(str(payload.get("subscriptionstart", "")).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(payload.get("subscriptionuntil", "")).replace("Z", "+00:00"))
+            start, end = _aware_utc(start), _aware_utc(end)
+            if start <= now < end:
+                return start.astimezone(timezone.utc), "provider_subscription"
+    except (ValueError, TypeError):
+        pass
+    return billing_period_start(now), "legacy_25th_estimate"
+
+
 def quota_status() -> dict:
     now = utcnow()
-    daily_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    daily_start = now.astimezone(BEIJING_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    period_start, period_source = effective_billing_period(now)
     monthly = db.session.query(func.coalesce(func.sum(QuotaUsage.credits), 0)).filter(
-        QuotaUsage.endpoint == "inventory", QuotaUsage.used_at >= billing_period_start(now)
+        QuotaUsage.endpoint == "inventory", QuotaUsage.used_at >= period_start
     ).scalar()
     daily = db.session.query(func.coalesce(func.sum(QuotaUsage.credits), 0)).filter(
         QuotaUsage.endpoint == "inventory", QuotaUsage.used_at >= daily_start
@@ -438,6 +456,8 @@ def quota_status() -> dict:
         "daily_budget": current_app.config["INVENTORY_DAILY_BUDGET"],
         "daily_budget_enforced": False,
         "billing_used": billing_used,
+        "billing_period_start": beijing_iso(period_start),
+        "billing_period_source": period_source,
         "billing_budget": billing_budget,
         "billing_remaining": billing_remaining,
         "billing_budget_enforced": False,
@@ -449,7 +469,12 @@ def quota_status() -> dict:
             current_app.config["REQUESTS_PER_SCAN"]
             * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]
         ),
-        "scheduled_scans_per_day": 6,
+        "scheduled_scans_per_day": len(SCHEDULED_ROUNDS),
+        "scheduled_scan_hours_beijing": [hour for hour, _, _ in SCHEDULED_ROUNDS],
+        "estimated_scheduled_credits_per_target_day": sum(
+            current_app.config["REQUESTS_PER_SCAN"] if kind == "daily" else 1
+            for _, _, kind in SCHEDULED_ROUNDS
+        ) * current_app.config["INVENTORY_CREDITS_PER_REQUEST"],
     }
 
 

@@ -329,7 +329,8 @@ class PlatformTests(unittest.TestCase):
     def test_prune_keeps_recent_48h_and_one_per_beiing_day(self):
         with self.app.app_context():
             target = SteamTarget.query.first()
-            now = utcnow()
+            # 固定北京正午，避免相对小时夹具随执行时刻跨自然日。
+            now = datetime(2026, 10, 14, 4, tzinfo=timezone.utc)
             rows = []
             # 北京自然日 D-4：三张（保留最后一张）
             for hour in (93, 92, 91):
@@ -347,22 +348,13 @@ class PlatformTests(unittest.TestCase):
                 snap.scanned_at = now - timedelta(hours=hour)
                 rows.append(snap)
             db.session.commit()
-            result = prune_expired()
+            expected_ids = {rows[index].id for index in (2, 4, 5, 6)}
+            with mock.patch("cs2_inventory.services.utcnow", return_value=now):
+                result = prune_expired()
             # D-4 删 2 张 + D-3 删 1 张 = 3 张
             self.assertEqual(result["snapshots"], 3)
             survivors = {row.id for row in Snapshot.query.filter_by(target_id=target.id).all()}
-            db.session.expire_all()
-            scanned_hours = {}
-            for row in rows:
-                fresh = db.session.get(Snapshot, row.id)
-                if fresh is not None:
-                    scanned_hours[row.id] = (now - fresh.scanned_at.replace(tzinfo=timezone.utc)).total_seconds() / 3600
-            d4_rows = [row for row in rows if 91 <= scanned_hours.get(row.id, -1) <= 93]
-            d3_rows = [row for row in rows if 70 <= scanned_hours.get(row.id, -1) <= 72]
-            recent_rows = [row for row in rows if scanned_hours.get(row.id, 1e9) < 48]
-            self.assertIn(max(d4_rows, key=lambda row: row.id).id, survivors)
-            self.assertIn(max(d3_rows, key=lambda row: row.id).id, survivors)
-            self.assertTrue({row.id for row in recent_rows} <= survivors)
+            self.assertEqual(survivors, expected_ids)
 
     def test_worker_batch_group_claims_light_jobs_and_stores_snapshots(self):
         with self.app.app_context():
@@ -395,7 +387,7 @@ class PlatformTests(unittest.TestCase):
                 self.assertEqual(claimed, job_ids)
                 process_batch_group(claimed)
                 self.assertEqual(light.call_count, 3)
-                for call in light.call_list:
+                for call in light.call_args_list:
                     self.assertTrue(call.kwargs.get("single_inventory"))
             db.session.expire_all()
             for job_id in job_ids:
@@ -677,13 +669,13 @@ class PlatformTests(unittest.TestCase):
 
     def test_daily_batch_sets_maintenance_and_queues_all_targets(self):
         with self.app.app_context():
-            # 北京时间 2026-09-06 07:30 → R1 轻量窗口；20:00 → R5 轻量窗口。
-            morning_time = datetime(2026, 9, 5, 23, 30, tzinfo=timezone.utc)
+            # 北京时间 2026-09-06 08:00 深度窗口；20:00 轻量窗口。
+            morning_time = datetime(2026, 9, 6, 0, 0, tzinfo=timezone.utc)
             evening_time = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
             morning = enqueue_daily(now=morning_time)
             duplicate = enqueue_daily(now=morning_time + timedelta(minutes=5))
             evening = enqueue_daily(now=evening_time)
-            self.assertEqual(scheduled_slot_key(morning_time), "2026-09-06-R1")
+            self.assertEqual(scheduled_slot_key(morning_time), "2026-09-06-R2")
             self.assertEqual(scheduled_slot_key(evening_time), "2026-09-06-R5")
             self.assertEqual(morning["jobs"], 3)
             self.assertEqual(duplicate["batch_id"], morning["batch_id"])
@@ -694,7 +686,7 @@ class PlatformTests(unittest.TestCase):
             for batch_id in (morning["batch_id"], evening["batch_id"]):
                 batch = db.session.get(ScanBatch, batch_id)
                 kinds = {job.kind for job in ScanJob.query.filter_by(batch_id=batch.id)}
-                self.assertEqual(kinds, {"daily_light"})
+                self.assertEqual(kinds, {"daily" if batch_id == morning["batch_id"] else "daily_light"})
             from cs2_inventory.services import maintenance_active
             self.assertTrue(maintenance_active())
             first = db.session.get(ScanBatch, morning["batch_id"])
@@ -710,13 +702,13 @@ class PlatformTests(unittest.TestCase):
             finish_batch(second.id)
             self.assertFalse(maintenance_active())
 
-    def test_scheduled_slot_key_maps_six_rounds_with_deep_slot(self):
+    def test_scheduled_slot_key_maps_two_rounds_without_cross_day_catchup(self):
         cases = [
-            (datetime(2026, 9, 6, 16, 0, tzinfo=timezone.utc), "2026-09-07-R0"),  # 北京 00:00
-            (datetime(2026, 9, 6, 20, 30, tzinfo=timezone.utc), "2026-09-07-R1"),  # 北京 04:30
+            (datetime(2026, 9, 6, 16, 0, tzinfo=timezone.utc), None),  # 北京 00:00
+            (datetime(2026, 9, 6, 20, 30, tzinfo=timezone.utc), None),  # 北京 04:30
             (datetime(2026, 9, 7, 0, 30, tzinfo=timezone.utc), "2026-09-07-R2"),  # 北京 08:30 深度
-            (datetime(2026, 9, 7, 5, 0, tzinfo=timezone.utc), "2026-09-07-R3"),  # 北京 13:00
-            (datetime(2026, 9, 7, 9, 59, tzinfo=timezone.utc), "2026-09-07-R4"),  # 北京 17:59
+            (datetime(2026, 9, 7, 5, 0, tzinfo=timezone.utc), "2026-09-07-R2"),  # 北京 13:00 不重复建轮
+            (datetime(2026, 9, 7, 9, 59, tzinfo=timezone.utc), "2026-09-07-R2"),  # 北京 17:59
             (datetime(2026, 9, 7, 14, 0, tzinfo=timezone.utc), "2026-09-07-R5"),  # 北京 22:00
         ]
         for moment, expected in cases:
