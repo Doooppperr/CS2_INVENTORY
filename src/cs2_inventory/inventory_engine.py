@@ -594,11 +594,13 @@ def assess_inventory_quality(public_records, hidden_records, cached_records, off
     except ImportError:  # 兼容单文件 CLI。
         from observation import error_reason_codes
     records = [*public_records, *hidden_records]
+    observed_total = sum(r.amount for r in records)
     codes = error_reason_codes(errors)
     if official_total is None:
         codes.append("total_unknown")
-    elif int(official_total) != sum(r.amount for r in records):
-        codes.append("count_mismatch")
+    elif int(official_total) > observed_total:
+        codes.append("count_shortfall")
+    # Steam 公开计数不是总库存上限；跨来源按 assetid 去重后的较大观测并集不因此降级。
     if cached_records or any(r.observation == "cached" for r in records):
         codes.append("cached_items")
     if any(r.observation not in {"live", "cached"} for r in records):
@@ -612,7 +614,8 @@ def assess_inventory_quality(public_records, hidden_records, cached_records, off
     if warnings:
         codes = []
     return {"comparable": not codes, "reason_codes": list(dict.fromkeys(codes)), "warnings": warnings,
-            "official_total": official_total, "observed_total": sum(r.amount for r in records),
+            "official_total": official_total, "observed_total": observed_total,
+            "count_policy": "observed_union",
             "live_count": sum(r.amount for r in records if r.observation == "live"),
             "cached_count": sum(r.amount for r in cached_records)
                 + sum(r.amount for r in records if r.observation == "cached"),

@@ -19,6 +19,34 @@ class ScanQualityTests(unittest.TestCase):
         self.assertTrue(quality["comparable"])
         self.assertEqual(scan_quality({"quality": quality}), "ready")
 
+    def test_observed_union_above_steam_count_is_not_incomplete(self):
+        public = [engine.AssetRecord(assetid=str(i), classid="100", instanceid="0", name="皮肤", observation="live") for i in range(644)]
+        hidden = [engine.AssetRecord(assetid=str(i), classid="100", instanceid="0", name="保护皮肤", observation="live", tradeprotected=True) for i in range(644, 651)]
+        quality = engine.assess_inventory_quality(public, hidden, [], 647, [])
+        self.assertTrue(quality["comparable"])
+        self.assertEqual(quality["observed_total"], 651)
+        unified = unify_inventory({"public": engine.group_records_by_name(public),
+            "protected_live": engine.group_records_by_name(hidden), "quality": quality})
+        self.assertEqual(unified["total_items"], 651)
+        self.assertEqual(unified["_scan_status"], "ready")
+
+    def test_union_deduplicates_ids_and_does_not_invent_declared_missing_items(self):
+        one = self.asset()
+        rows = engine.merge_asset_records([[one], [one]])
+        self.assertEqual(len(rows), 1)
+        quality = engine.assess_inventory_quality(rows, [], [], 9, [])
+        unified = unify_inventory({"public": engine.group_records_by_name(rows), "quality": quality})
+        self.assertEqual(unified["total_items"], 1)
+        self.assertEqual(unified["_scan_status"], "partial")
+        self.assertEqual(quality["reason_codes"], ["count_shortfall"])
+
+    def test_larger_count_does_not_override_freshness_or_transport_failure(self):
+        for observation, errors, code in (("cached", [], "cached_items"), ("unknown", [], "freshness_unknown"),
+                                          ("live", ["官方公开库存: HTTP 429"], "steam_rate_limit")):
+            quality = engine.assess_inventory_quality([self.asset(observation)], [], [], 0, errors)
+            self.assertFalse(quality["comparable"])
+            self.assertIn(code, quality["reason_codes"])
+
     def test_real_light_path_is_not_permanently_partial(self):
         payload = {"assets": [{"assetid": "1", "classid": "100", "instanceid": "0"}],
                    "descriptions": [{"classid": "100", "instanceid": "0", "name": "皮肤"}], "total_inventory_count": 1}
@@ -32,7 +60,7 @@ class ScanQualityTests(unittest.TestCase):
         cases = [([self.asset("unknown")], [], [], 1, "freshness_unknown"),
                  ([self.asset("cached")], [], [], 1, "cached_items"),
                  ([self.asset()], [], [self.asset("cached")], 1, "cached_items"),
-                 ([self.asset()], [], [], 2, "count_mismatch"),
+                 ([self.asset()], [], [], 2, "count_shortfall"),
                  ([self.asset()], [], [], None, "total_unknown")]
         for public, hidden, cached, total, code in cases:
             quality = engine.assess_inventory_quality(public, hidden, cached, total, [])

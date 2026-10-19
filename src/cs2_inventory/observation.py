@@ -13,6 +13,7 @@ QUALITY_MESSAGES = {
     "pagination": "库存分页未完成",
     "total_unknown": "尚未取得可核对的库存总数",
     "count_mismatch": "已观测物品与官方总数未对齐",
+    "count_shortfall": "已观测物品仍少于上游声明数量，部分物品尚未取回",
     "cached_items": "包含历史缓存物品，本轮是否仍在库存尚待确认",
     "freshness_unknown": "部分物品的实时性尚未确认",
     "identity_unknown": "部分物品缺少可靠资产标识",

@@ -283,4 +283,4 @@ def dashboard_data(user, args):
                                 for c, n in sorted(quality_counts.items()) if quality_messages([c])],
             "page": page, "pages": max(1, (total + size - 1) // size), "total": total,
             "section_counts": {k: len(v) for k, v in aggregates.items()},
-            "note": "首次发现不等于买入；再次出现不等于确定从组件取出。仅比较相邻日期早间深度扫描，未核实数据不进正式排行。历史识别从平台保留记录开始。"}
+            "note": "总数按跨来源物品去重后的观测并集，Steam 公开计数不作为上限。首次发现不等于买入；再次出现不等于确定从组件取出。仅比较相邻日期早间深度扫描，未核实数据不进正式排行。历史识别从平台保留记录开始。"}
