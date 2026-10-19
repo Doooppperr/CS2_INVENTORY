@@ -8,6 +8,11 @@ CS2 Steam 库存查询：
 """
 from __future__ import annotations
 
+if __package__:
+    from .network import steam_urlopen
+else:  # 保留独立 CLI 调用。
+    from network import steam_urlopen
+
 import argparse
 import collections
 import concurrent.futures
@@ -120,6 +125,9 @@ class AssetRecord:
     sources: Tuple[str, ...] = ()
     protection_state: str = ""
     raw_name: str = ""
+    market_name: str = ""
+    item_type: str = ""
+    observation: str = "unknown"
 
 
 def _string(value: Any, default: str = "") -> str:
@@ -241,7 +249,7 @@ def http_get_json_with_headers(
             request_observer()
         request = urllib.request.Request(full_url, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with steam_urlopen(request, timeout=timeout) as response:
                 raw = response.read().decode("utf-8", errors="replace")
                 try:
                     payload = json.loads(raw)
@@ -291,7 +299,7 @@ def http_get_text(
     for attempt in range(retries + 1):
         request = urllib.request.Request(full_url, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with steam_urlopen(request, timeout=timeout) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
                 return response.read().decode(charset, errors="replace"), response.geturl()
         except urllib.error.HTTPError as exc:
@@ -358,6 +366,10 @@ def fetch_public_inventory(
         start_assetid = _string(data.get("last_assetid")) or None
         if not data.get("more_items") or not start_assetid:
             break
+    if pages and pages[-1].get("more_items"):
+        raise SteamQueryError("官方库存分页未完成，未确认全量库存")
+    if not pages or pages[-1].get("success") not in (True, 1, "1"):
+        raise SteamQueryError("官方库存缺少成功确认")
     return merge_inventory_pages(pages)
 
 
@@ -539,6 +551,24 @@ def _raw_asset_appid(asset: Mapping[str, Any]) -> str:
     return appid or str(APPID_CS2)
 
 
+def _item_type(item):
+    for tag in item.get("tags") or []:
+        if isinstance(tag, Mapping) and tag.get("category") == "Type":
+            return _string(tag.get("internal_name") or tag.get("localized_tag_name"))
+    value = item.get("itemtype") or item.get("type") or ""
+    return value if isinstance(value, str) else ""
+
+
+def _freshness(source, item=None):
+    if source.startswith("steam_public_contextid2"):
+        return "live"
+    item = item if isinstance(item, Mapping) else {}
+    if "freshness=cached" in source or item.get("cached") is True or item.get("from_cache") is True:
+        return "cached"
+    # no_cache 是请求意图，不是实时响应证明；无证据保留未知。
+    return "unknown"
+
+
 def asset_records_from_raw_payload(payload: Any, *, source: str) -> List[AssetRecord]:
     """Convert a parse=0 Steamwebapi response into strict CS2 asset records.
 
@@ -572,6 +602,9 @@ def asset_records_from_raw_payload(payload: Any, *, source: str) -> List[AssetRe
                 instanceid=instanceid,
                 name=name,
                 raw_name=_string((description or {}).get("market_hash_name") or name),
+                market_name=_string((description or {}).get("market_hash_name")),
+                item_type=_item_type(description or {}),
+                observation=_freshness(source),
                 amount=_amount(asset.get("amount")),
                 contextid=CONTEXTID_CS2,
                 appid=str(APPID_CS2),
@@ -602,6 +635,9 @@ def asset_records_from_parsed_payload(payload: Any, *, source: str, now: int | N
                 instanceid=instanceid,
                 name=_steamwebapi_item_name(item),
                 raw_name=_string(item.get("market_hash_name") or item.get("markethashname") or _steamwebapi_item_name(item)),
+                market_name=_string(item.get("market_hash_name") or item.get("markethashname")),
+                item_type=_item_type(item),
+                observation=_freshness(source, item),
                 amount=_steamwebapi_amount(item),
                 contextid=CONTEXTID_CS2,
                 appid=str(APPID_CS2),
@@ -638,6 +674,9 @@ def asset_records_from_public_payload(payload: Mapping[str, Any], *, source: str
                 instanceid=instanceid,
                 name=_name_from_description(description),
                 raw_name=_string((description or {}).get("market_hash_name") or _name_from_description(description)),
+                market_name=_string((description or {}).get("market_hash_name")),
+                item_type=_item_type(description or {}),
+                observation=_freshness(source),
                 amount=_amount(asset.get("amount")),
                 contextid=CONTEXTID_CS2,
                 appid=str(APPID_CS2),
@@ -677,6 +716,9 @@ def merge_asset_records(record_lists: Iterable[Iterable[AssetRecord]]) -> List[A
                 sources=merged_sources,
                 protection_state=record.protection_state or previous.protection_state,
                 raw_name=record.raw_name or previous.raw_name,
+                market_name=record.market_name or previous.market_name,
+                item_type=record.item_type or previous.item_type,
+                observation=("live" if "live" in (record.observation, previous.observation) else record.observation),
             )
     return sorted(by_assetid.values(), key=lambda record: (record.name, record.assetid))
 
@@ -784,6 +826,8 @@ def fetch_steamwebapi_raw_inventory(
             except SteamQueryError as exc:
                 errors.append(f"{page_label}: {exc}")
                 break
+            if isinstance(payload, Mapping) and (payload.get("cached") is True or payload.get("from_cache") is True):
+                page_label += ":freshness=cached"
             duration_ms = int((time.monotonic() - started) * 1000)
             error_text = _steamwebapi_error_text(payload)
             if error_text:
@@ -818,6 +862,9 @@ def fetch_steamwebapi_raw_inventory(
                 )
             )
             _rate_limit_sleep(headers)
+            if last_assetid and (last_assetid == start_assetid or page_index + 1 >= max_pages_per_sample):
+                errors.append(f"{page_label}: 库存分页未完成或游标重复")
+                break
             if last_assetid and last_assetid != start_assetid:
                 start_assetid = last_assetid
                 time.sleep(max(0.0, rate_gap))
@@ -923,6 +970,9 @@ def _merge_two_asset_records(first: AssetRecord, second: AssetRecord) -> AssetRe
         sources=tuple(sorted(set(first.sources) | set(second.sources))),
         protection_state=first.protection_state or second.protection_state,
         raw_name=first.raw_name or second.raw_name,
+        market_name=first.market_name or second.market_name,
+        item_type=first.item_type or second.item_type,
+        observation="live" if "live" in (first.observation, second.observation) else first.observation,
     )
 
 
@@ -994,6 +1044,10 @@ def classify_hidden_assets(
                 classid=merged.classid,
                 instanceid=merged.instanceid,
                 name=merged.name,
+                raw_name=merged.raw_name,
+                market_name=merged.market_name,
+                item_type=merged.item_type,
+                observation=merged.observation,
                 amount=merged.amount,
                 contextid=merged.contextid,
                 appid=merged.appid,
@@ -1009,6 +1063,10 @@ def classify_hidden_assets(
                 classid=merged.classid,
                 instanceid=merged.instanceid,
                 name=merged.name,
+                raw_name=merged.raw_name,
+                market_name=merged.market_name,
+                item_type=merged.item_type,
+                observation=merged.observation,
                 amount=merged.amount,
                 contextid=merged.contextid,
                 appid=merged.appid,
@@ -1035,6 +1093,10 @@ def classify_hidden_assets(
                 classid=record.classid,
                 instanceid=record.instanceid,
                 name=record.name,
+                raw_name=record.raw_name,
+                market_name=record.market_name,
+                item_type=record.item_type,
+                observation=record.observation,
                 amount=record.amount,
                 contextid=record.contextid,
                 appid=record.appid,
@@ -1054,6 +1116,10 @@ def classify_hidden_assets(
                 classid=record.classid or moved.classid,
                 instanceid=record.instanceid or moved.instanceid,
                 name=record.name or moved.name,
+                raw_name=record.raw_name or moved.raw_name,
+                market_name=record.market_name or moved.market_name,
+                item_type=record.item_type or moved.item_type,
+                observation=record.observation,
                 amount=max(record.amount, moved.amount),
                 contextid=record.contextid,
                 appid=record.appid,
@@ -1072,6 +1138,10 @@ def classify_hidden_assets(
             classid=record.classid,
             instanceid=record.instanceid,
             name=record.name,
+            raw_name=record.raw_name,
+            market_name=record.market_name,
+            item_type=record.item_type,
+            observation=record.observation,
             amount=record.amount,
             contextid=record.contextid,
             appid=record.appid,
@@ -1376,6 +1446,9 @@ def _apply_observation_cache_unlocked(
         previous_sources_list = previous_sources if isinstance(previous_sources, list) else []
         account[assetid] = {
             "name": record.name,
+            "raw_name": record.raw_name,
+            "market_name": record.market_name,
+            "item_type": record.item_type,
             "amount": record.amount,
             "classid": record.classid,
             "instanceid": record.instanceid,
@@ -1410,6 +1483,10 @@ def _apply_observation_cache_unlocked(
                 classid=_string(row.get("classid")),
                 instanceid=_string(row.get("instanceid"), "0") or "0",
                 name=_string(row.get("name") or "未知物品"),
+                raw_name=_string(row.get("raw_name")),
+                market_name=_string(row.get("market_name")),
+                item_type=_string(row.get("item_type")),
+                observation="cached",
                 amount=_amount(row.get("amount")),
                 contextid=CONTEXTID_CS2,
                 appid=str(APPID_CS2),
@@ -1473,6 +1550,9 @@ def seed_observation_cache(
             continue
         account[record.assetid] = {
             "name": record.name,
+            "raw_name": record.raw_name,
+            "market_name": record.market_name,
+            "item_type": record.item_type,
             "amount": record.amount,
             "classid": record.classid,
             "instanceid": record.instanceid,
@@ -2057,6 +2137,9 @@ def group_records_by_name(records: Iterable[AssetRecord]) -> List[Dict[str, Any]
                 "instanceid": record.instanceid,
                 "name": record.name,
                 "raw_name": record.raw_name or record.name,
+                "market_name": record.market_name,
+                "item_type": record.item_type,
+                "observation": record.observation,
                 "amount": record.amount,
                 "name_localized": (
                     "localized_official_schinese" in record.sources
@@ -2125,7 +2208,7 @@ def fetch_csfloat_listings(
     try:
         query = urllib.parse.urlencode(params)
         request = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with steam_urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8", errors="replace"))
         rows: List[Dict[str, Any]] = []
         if isinstance(payload, Mapping):
@@ -2438,6 +2521,10 @@ def run_max_coverage_query(
                             classid=_string(row.get("classid")),
                             instanceid=_string(row.get("instanceid"), "0") or "0",
                             name=_string(row.get("name") or "未知物品"),
+                raw_name=_string(row.get("raw_name")),
+                market_name=_string(row.get("market_name")),
+                item_type=_string(row.get("item_type")),
+                observation="cached",
                             amount=_amount(row.get("amount")),
                             contextid=CONTEXTID_CS2,
                             appid=str(APPID_CS2),
@@ -2601,6 +2688,9 @@ def run_max_coverage_query(
     )
     return {
         "steamid": steamid,
+        "quality": {"comparable": not errors and not observed_hidden and official_total is not None
+            and int(official_total) == sum(r.amount for r in [*public_records, *live_hidden])
+            and all(r.observation == "live" for r in [*public_records, *live_hidden])},
         "owner_view": bool(owner_cookie),
         "protected_live": group_records_by_name(live_protected),
         "protected_observed": group_records_by_name(observed_protected),
@@ -2838,6 +2928,7 @@ def run_lightweight_query(
     )
     return {
         "steamid": steamid,
+        "quality": {"comparable": False},
         "owner_view": False,
         "protected_live": group_records_by_name(live_protected),
         "protected_observed": group_records_by_name(observed_protected),

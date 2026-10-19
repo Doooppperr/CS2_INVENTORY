@@ -28,6 +28,7 @@ from .localization import (
 )
 from .models import (
     BEIJING_TIMEZONE,
+    DailyObservation,
     QuotaUsage,
     ScanJob,
     Snapshot,
@@ -35,10 +36,12 @@ from .models import (
     SteamTarget,
     Subscription,
     SystemState,
+    TargetAssetHistory,
     User,
     beijing_iso,
     utcnow,
 )
+from .observation import evidence_observation, private_errors, reliable_id, row_evidence
 from .scheduling import SCHEDULED_ROUNDS
 from .unified import evidence_json, public_payload
 
@@ -74,7 +77,7 @@ def target_label(target: SteamTarget) -> str:
 
 def latest_snapshot(target_id: int) -> Snapshot | None:
     return (
-        Snapshot.query.filter_by(target_id=target_id)
+        Snapshot.query.filter_by(target_id=target_id).filter(Snapshot.coverage.notin_(["failed", "private"]))
         .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
         .first()
     )
@@ -161,10 +164,10 @@ def monitor_public(subscription: Subscription, user: User, *, include_latest: bo
         "persona_name": target.persona_name,
         "remark": subscription.remark,
         "label": label,
-        "scan_status": target.scan_status,
+        "scan_status": ("ready" if snapshot and snapshot.coverage in {"ok", "complete"} else "partial" if snapshot else "pending") if frozen_view else target.scan_status,
         "last_scan_at": beijing_iso(snapshot.scanned_at if frozen_view and snapshot else target.last_scan_at),
         "last_success_at": beijing_iso(snapshot.scanned_at if frozen_view and snapshot else target.last_success_at),
-        "last_error": target.last_error,
+        "last_error": None if frozen_view else target.last_error,
         "latest": snapshot_public(snapshot, include_items=False) if include_latest and snapshot else None,
         "subscriber_count": len(target.subscriptions),
     }
@@ -261,13 +264,28 @@ def delete_user_account(user: User) -> int:
     return deleted_targets
 
 
-def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
+def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot | None:
     scanned_at = utcnow()
+    status = unified.get("_scan_status") or (
+        "private" if private_errors(unified.get("errors") or []) else
+        "failed" if unified.get("coverage") == "failed" else
+        "ready" if unified.get("coverage") in {"ok", "complete"} else "partial"
+    )
+    target.last_scan_at = scanned_at
+    target.scan_status = status
+    target.last_error = {"private": "已私密", "failed": "扫描失败，保留上次有效库存",
+                         "partial": "数据不完整，缺失物品尚未确认移除"}.get(status)
+    if status in {"private", "failed"}:
+        return None
+    history = {row.asset_key: row for row in TargetAssetHistory.query.filter_by(target_id=target.id)}
+
     previous = latest_snapshot(target.id)
     previous_seen = {
         item.asset_key: (item.first_seen_at or previous.scanned_at)
         for item in previous.items
+        if evidence_observation(row_evidence(item)) != "cached"
     } if previous else {}
+    previous_seen.update({key: row.first_seen_at for key, row in history.items()})
     language = current_app.config.get("ITEM_LANGUAGE", "schinese")
     unresolved_count = canonicalize_unified(target, unified, language=language)
     public = public_payload(unified, scanned_at=beijing_iso(scanned_at))
@@ -276,7 +294,7 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
         target_id=target.id,
         total_items=unified["total_items"],
         item_types=unified["item_types"],
-        coverage=unified["coverage"],
+        coverage="complete" if status == "ready" else "degraded" if unified.get("errors") else "partial",
         elapsed_ms=unified["elapsed_ms"],
         errors_json=json.dumps(unified.get("errors") or [], ensure_ascii=False),
         payload_gzip=blob,
@@ -285,6 +303,16 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
     db.session.add(snapshot)
     db.session.flush()
     for asset in unified.get("_assets") or []:
+        asset.setdefault("observation", "live")
+        key = asset["asset_key"]
+        first_seen = previous_seen.get(key, scanned_at)
+        if reliable_id(key) and asset.get("observation") != "cached":
+            if key in history:
+                history[key].last_seen_at = scanned_at
+            else:
+                history[key] = TargetAssetHistory(target_id=target.id, asset_key=key,
+                    first_seen_at=first_seen, last_seen_at=scanned_at)
+                db.session.add(history[key])
         db.session.add(SnapshotItem(
             snapshot_id=snapshot.id,
             asset_key=asset["asset_key"],
@@ -301,8 +329,6 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot:
     queue_localization_job(snapshot, target, unresolved_count, language=language)
     target.last_success_at = snapshot.scanned_at
     target.last_scan_at = snapshot.scanned_at
-    target.scan_status = "ready"
-    target.last_error = None
     return snapshot
 
 
@@ -331,17 +357,44 @@ def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
         current_counts[stable_name(row)] += row.amount
     for row in previous_rows.values():
         previous_counts[stable_name(row)] += row.amount
-    names = sorted(set(current_counts) | set(previous_counts))
-    added, removed, changed = [], [], []
-    for name in names:
+    new_counts, returns, uncertain, missing = Counter(), Counter(), Counter(), Counter()
+    complete = bool(previous and current.coverage in {"ok", "complete"}
+                    and previous.coverage in {"ok", "complete"})
+    history = {row.asset_key: row.first_seen_at for row in TargetAssetHistory.query.filter_by(target_id=current.target_id)}
+    if previous:
+        for key, row in current_rows.items():
+            if key in previous_rows:
+                continue
+            name = stable_name(row)
+            evidence = row_evidence(row)
+            if not reliable_id(key) or evidence_observation(evidence) != "live":
+                uncertain[name] += row.amount
+                continue
+            seen = history.get(key, row.first_seen_at or current.scanned_at)
+            if _datetime_sort_key(seen) <= _datetime_sort_key(previous.scanned_at):
+                returns[name] += row.amount
+            else:
+                new_counts[name] += row.amount
+        for key, row in previous_rows.items():
+            if key not in current_rows:
+                missing[stable_name(row)] += row.amount
+    removed, changed = [], []
+    for name in sorted(set(current_counts) | set(previous_counts)):
         before, after = previous_counts[name], current_counts[name]
-        if before == 0 and after:
-            added.append({"name": name, "count": after})
-        elif after == 0 and before:
+        if not previous or before == after:
+            continue
+        if complete and not after and before:
             removed.append({"name": name, "count": before})
-        elif before != after:
+        elif complete and before and after and before != after:
             changed.append({"name": name, "before": before, "after": after, "delta": after - before})
-    return {"from_snapshot_id": previous.id if previous else None, "to_snapshot_id": current.id, "added": added, "removed": removed, "changed": changed}
+    def rows(counts):
+        return [{"name": name, "count": amount} for name, amount in sorted(counts.items()) if amount]
+    return {"from_snapshot_id": previous.id if previous else None, "to_snapshot_id": current.id,
+            "added": rows(new_counts), "removed": removed, "changed": changed,
+            "reappeared": rows(returns), "unconfirmed": rows(missing) if not complete else [],
+            "pending": rows(uncertain), "comparable": complete, "baseline_only": previous is None,
+            "note": "首次发现不等于买入；再次出现可能来自组件取出或此前漏扫。"}
+
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -399,6 +452,9 @@ def prune_expired() -> dict:
 
     for row in stale_snapshots + expired_jobs:
         db.session.delete(row)
+    db.session.commit()
+    day_cutoff = (now.astimezone(BEIJING_TIMEZONE).date() - timedelta(days=7)).isoformat()
+    DailyObservation.query.filter(DailyObservation.day < day_cutoff).delete(synchronize_session=False)
     db.session.commit()
     lifecycle = cleanup_lifecycle()
     return {"snapshots": len(stale_snapshots), "jobs": len(expired_jobs), "lifecycle": lifecycle}

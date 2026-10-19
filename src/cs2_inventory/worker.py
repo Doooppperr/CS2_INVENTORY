@@ -14,6 +14,7 @@ from flask import current_app
 
 from . import inventory_engine
 from .app import create_app
+from .dashboard import record_daily_job
 from .database import db
 from .entitlements import scan_job_eligible
 from .inventory_engine import (
@@ -30,6 +31,7 @@ from .models import (
     beijing_iso,
     utcnow,
 )
+from .network import steam_urlopen
 from .services import prune_expired, quota_allows_scan, state_set, store_snapshot
 from .unified import public_payload, unify_inventory
 
@@ -90,7 +92,7 @@ def fetch_persona_name(steamid: str) -> str | None:
         return None
     url = "https://www.steamwebapi.com/steam/api/profile?" + urllib.parse.urlencode({"key": key, "steam_id": steamid})
     try:
-        with urllib.request.urlopen(url, timeout=20) as response:
+        with steam_urlopen(url, timeout=20) as response:
             payload = json.loads(response.read())
         candidates = [payload]
         if isinstance(payload, list):
@@ -120,7 +122,7 @@ def refresh_official_usage() -> dict:
     else:
         url = "https://www.steamwebapi.com/account/me?" + urllib.parse.urlencode({"key": key})
         try:
-            with urllib.request.urlopen(url, timeout=20) as response:
+            with steam_urlopen(url, timeout=20) as response:
                 payload = json.loads(response.read())
             result = {"available": True, "payload": payload, "checked_at": beijing_iso(utcnow())}
         except Exception as exc:
@@ -268,6 +270,7 @@ def process_job(job_id: int) -> None:
                 target.scan_status = "failed"
                 target.last_error = job.error
                 target.last_scan_at = utcnow()
+                record_daily_job(job, target)
         db.session.commit()
         finish_batch(job.batch_id)
         return
@@ -290,6 +293,7 @@ def process_job(job_id: int) -> None:
         unified = unify_inventory(result)
         credits = estimate_inventory_credits(result)
         db.session.add(QuotaUsage(endpoint="inventory", credits=credits, source=job.kind))
+        db.session.commit()  # 请求已发生，后续存储失败也不能丢失额度账目。
         if job.target_id:
             target = db.session.get(SteamTarget, job.target_id)
             if not target:
@@ -299,14 +303,16 @@ def process_job(job_id: int) -> None:
             ):
                 target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
                 target.profile_updated_at = utcnow()
-            store_snapshot(target, unified)
+            snapshot = store_snapshot(target, unified)
+            record_daily_job(job, target, snapshot)
             job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
         else:
             job.result_json = json.dumps(
                 public_payload(unified, scanned_at=beijing_iso(utcnow())),
                 ensure_ascii=False,
             )
-        job.status = "completed"
+        job.status = "failed" if unified.get("_scan_status") in {"private", "failed"} else "completed"
+        job.error = ("已私密" if unified.get("_scan_status") == "private" else "扫描失败，保留上次有效库存") if job.status == "failed" else None
         job.finished_at = utcnow()
         db.session.commit()
     except Exception as exc:
@@ -323,6 +329,7 @@ def process_job(job_id: int) -> None:
                 target.scan_status = "failed"
                 target.last_error = job.error
                 target.last_scan_at = utcnow()
+                record_daily_job(job, target)
         db.session.commit()
     finally:
         fresh = db.session.get(ScanJob, job_id)
@@ -345,6 +352,8 @@ def _finish_job(job_id: int, *, status: str, error: str | None = None) -> None:
             if status == "failed":
                 target.last_error = job.error
             target.last_scan_at = utcnow()
+            if status == "failed":
+                record_daily_job(job, target)
     db.session.commit()
 
 
@@ -382,6 +391,7 @@ def process_batch_group(job_ids: list[int]) -> None:
             unified = unify_inventory(result)
             credits = estimate_inventory_credits(result)
             db.session.add(QuotaUsage(endpoint="inventory", credits=credits, source="daily_light"))
+            db.session.commit()
             if job.target_id:
                 target = db.session.get(SteamTarget, job.target_id)
                 if not target:
@@ -391,14 +401,16 @@ def process_batch_group(job_ids: list[int]) -> None:
                 ):
                     target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
                     target.profile_updated_at = utcnow()
-                store_snapshot(target, unified)
+                snapshot = store_snapshot(target, unified)
+                record_daily_job(job, target, snapshot)
                 job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
             else:
                 job.result_json = json.dumps(
                     public_payload(unified, scanned_at=beijing_iso(utcnow())),
                     ensure_ascii=False,
                 )
-            job.status = "completed"
+            job.status = "failed" if unified.get("_scan_status") in {"private", "failed"} else "completed"
+            job.error = ("已私密" if unified.get("_scan_status") == "private" else "扫描失败，保留上次有效库存") if job.status == "failed" else None
             job.finished_at = utcnow()
             db.session.commit()
         except Exception as exc:

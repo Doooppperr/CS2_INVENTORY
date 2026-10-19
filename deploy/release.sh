@@ -75,6 +75,8 @@ if [[ "$mode" == migrate ]]; then
   "$base/venv/bin/alembic" upgrade head)
 PYTHONPATH="$release/src" CS2_STATE_DIR="$state" INVENTORY_OBSERVATION_CACHE="$state/observations.json" \
   "$base/venv/bin/python" -m cs2_inventory.cli init-db
+PYTHONPATH="$release/src" CS2_STATE_DIR="$state" INVENTORY_OBSERVATION_CACHE="$state/observations.json" \
+  "$base/venv/bin/python" -m cs2_inventory.reporting_backfill
 fi
 chown -R cs2inventory:cs2inventory "$state"
 

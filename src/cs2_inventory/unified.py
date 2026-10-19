@@ -4,6 +4,8 @@ import collections
 import json
 from typing import Any, Mapping
 
+from .observation import asset_evidence, scan_quality
+
 INTERNAL_GROUPS = (
     "protected_live",
     "protected_observed",
@@ -35,6 +37,9 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
                     "asset_key": assetid,
                     "name": str(entry.get("name") or name),
                     "raw_name": str(entry.get("raw_name") or entry.get("name") or name),
+                    "market_name": entry.get("market_name", ""),
+                    "item_type": entry.get("item_type", ""),
+                    "observation": ("cached" if group_name.endswith("_observed") else entry.get("observation", "unknown")),
                     "classid": str(entry.get("classid") or ""),
                     "instanceid": str(entry.get("instanceid") or "0"),
                     "name_localized": bool(entry.get("name_localized", False)),
@@ -49,6 +54,7 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
                     "asset_key": assetid,
                     "name": name,
                     "raw_name": name,
+                    "observation": "cached" if group_name.endswith("_observed") else "unknown",
                     "classid": "",
                     "instanceid": "0",
                     "name_localized": False,
@@ -65,6 +71,7 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
                     "asset_key": key,
                     "name": name,
                     "raw_name": name,
+                    "observation": "cached" if group_name.endswith("_observed") else "unknown",
                     "classid": "",
                     "instanceid": "0",
                     "name_localized": False,
@@ -87,6 +94,7 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
         "elapsed_ms": int(result.get("elapsed_ms", 0) or 0),
         "errors": [str(value) for value in (result.get("errors") or [])],
         "_assets": list(assets.values()),
+        "_scan_status": scan_quality(result),
     }
 
 
@@ -103,4 +111,4 @@ def public_payload(unified: Mapping[str, Any], *, scanned_at: str | None = None)
 
 
 def evidence_json(asset: Mapping[str, Any]) -> str:
-    return json.dumps({"sources": asset.get("sources") or []}, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(asset_evidence(asset), ensure_ascii=False, separators=(",", ":"))

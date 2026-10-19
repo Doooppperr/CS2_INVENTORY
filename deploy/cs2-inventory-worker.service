@@ -1,6 +1,6 @@
 [Unit]
 Description=CS2 Inventory Monitor Scanner
-After=network-online.target cs2-inventory-web.service
+After=network-online.target cs2-inventory-web.service cs2-steam-proxy.service
 
 [Service]
 Type=simple

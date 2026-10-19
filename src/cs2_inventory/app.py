@@ -138,6 +138,10 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         csrf_token()
         return render_template("index.html")
 
+    @app.get("/app/dashboard", strict_slashes=False)
+    def dashboard_page():
+        return render_template("dashboard.html")
+
     @app.get("/app/monitors/<int:_target_id>", strict_slashes=False)
     def application_monitor_page(_target_id):
         csrf_token()
@@ -303,6 +307,21 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         if subscription:
             return target, subscription
         return None
+
+    @app.get("/api/dashboard")
+    @login_required
+    def daily_dashboard(user):
+        from .dashboard import dashboard_data
+        try:
+            data = dashboard_data(user, request.args)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+        response = jsonify(data)
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Vary"] = "Cookie"
+        return response
 
     @app.get("/api/monitors/<int:target_id>")
     @login_required

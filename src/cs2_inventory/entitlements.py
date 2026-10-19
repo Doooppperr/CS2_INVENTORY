@@ -124,7 +124,7 @@ def state_allows_monitor_write(user: User, *, now: datetime | None = None) -> bo
 
 
 def snapshot_query_for_user(user: User, target_id: int):
-    query = Snapshot.query.filter_by(target_id=target_id)
+    query = Snapshot.query.filter_by(target_id=target_id).filter(Snapshot.coverage.notin_(["failed", "private"]))
     state = entitlement_state(user)
     if state in {"admin", "internal", "active", "active_permanent"}:
         return query

@@ -55,6 +55,8 @@ class SteamTarget(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     subscriptions = db.relationship("Subscription", back_populates="target", cascade="all, delete-orphan")
     snapshots = db.relationship("Snapshot", back_populates="target", cascade="all, delete-orphan")
+    asset_history = db.relationship("TargetAssetHistory", cascade="all, delete-orphan", passive_deletes=True)
+    daily_observations = db.relationship("DailyObservation", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class Subscription(db.Model):
@@ -190,3 +192,23 @@ class SystemState(db.Model):
     key = db.Column(db.String(64), primary_key=True)
     value = db.Column(db.Text, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class TargetAssetHistory(db.Model):
+    """身份历史独立于短期快照，随监控目标删除。"""
+    __tablename__ = "target_asset_history"
+    target_id = db.Column(db.Integer, db.ForeignKey("steam_targets.id", ondelete="CASCADE"), primary_key=True)
+    asset_key = db.Column(db.String(128), primary_key=True)
+    first_seen_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    last_seen_at = db.Column(db.DateTime(timezone=True), nullable=False)
+
+
+class DailyObservation(db.Model):
+    """独立早间基线和已计算变动，清理原始快照不影响日报。"""
+    __tablename__ = "daily_observations"
+    target_id = db.Column(db.Integer, db.ForeignKey("steam_targets.id", ondelete="CASCADE"), primary_key=True)
+    day = db.Column(db.String(10), primary_key=True)
+    scanned_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    status = db.Column(db.String(24), nullable=False)
+    assets_json = db.Column(db.Text, nullable=False, default="[]")
+    report_json = db.Column(db.Text, nullable=False, default="{}")
