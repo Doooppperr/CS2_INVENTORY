@@ -41,7 +41,14 @@ from .models import (
     beijing_iso,
     utcnow,
 )
-from .observation import evidence_observation, private_errors, reliable_id, row_evidence
+from .observation import (
+    evidence_observation,
+    private_errors,
+    quality_messages,
+    reliable_id,
+    row_evidence,
+    snapshot_quality,
+)
 from .scheduling import SCHEDULED_ROUNDS
 from .unified import evidence_json, public_payload
 
@@ -84,6 +91,8 @@ def latest_snapshot(target_id: int) -> Snapshot | None:
 
 
 def snapshot_public(snapshot: Snapshot, *, include_items: bool = True) -> dict:
+    quality = snapshot_quality(snapshot)
+    quality["messages"] = quality_messages(quality.get("reason_codes", []))
     data = {
         "id": snapshot.id,
         "total_items": snapshot.total_items,
@@ -92,6 +101,7 @@ def snapshot_public(snapshot: Snapshot, *, include_items: bool = True) -> dict:
         "scanned_at": beijing_iso(snapshot.scanned_at),
         "elapsed_ms": snapshot.elapsed_ms,
         "errors": json.loads(snapshot.errors_json or "[]"),
+        "quality": quality,
     }
     if include_items:
         rows = Counter()
@@ -275,6 +285,9 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot | None:
     target.scan_status = status
     target.last_error = {"private": "已私密", "failed": "扫描失败，保留上次有效库存",
                          "partial": "数据不完整，缺失物品尚未确认移除"}.get(status)
+    reasons = quality_messages((unified.get("_quality") or {}).get("reason_codes", []))
+    if status == "partial" and reasons:
+        target.last_error = "；".join(reasons)
     if status in {"private", "failed"}:
         return None
     history = {row.asset_key: row for row in TargetAssetHistory.query.filter_by(target_id=target.id)}

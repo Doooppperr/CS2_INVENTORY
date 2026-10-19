@@ -18,7 +18,14 @@ from .models import (
     beijing_iso,
     utcnow,
 )
-from .observation import evidence_observation, reliable_id, row_evidence, signal_kind
+from .observation import (
+    evidence_observation,
+    quality_messages,
+    reliable_id,
+    row_evidence,
+    signal_kind,
+    snapshot_quality,
+)
 
 
 def stamp(value):
@@ -42,7 +49,10 @@ def snapshot_assets(snapshot):
 def calculate_report(current, previous):
     report = {"baseline_at": beijing_iso(previous.scanned_at) if previous else None,
               "scanned_at": beijing_iso(current.scanned_at), "comparable": False,
-              "baseline_only": previous is None, "changes": []}
+              "baseline_only": previous is None, "changes": [],
+              "baseline_status": previous.status if previous else None,
+              "quality": json.loads(current.report_json or "{}").get("quality", {}),
+              "baseline_quality": json.loads(previous.report_json or "{}").get("quality", {}) if previous else {}}
     if not previous or current.status in {"private", "failed"} or previous.status in {"private", "failed"}:
         return report
     before = json.loads(previous.assets_json)
@@ -83,10 +93,19 @@ def calculate_report(current, previous):
         unknown = sum(x["amount"] for x in arriving if x["observation"] != "live" or not reliable_id(x["id"]))
         if a == b and not arriving:
             continue
+        reasons = []
+        if current.status != "ready":
+            reasons.extend(report["quality"].get("reason_codes") or ["legacy_evidence"])
+        if previous.status != "ready":
+            reasons.append("baseline_incomplete")
+        if any(x["observation"] != "live" for x in all_assets):
+            reasons.append("freshness_unknown")
+        if any(not reliable_id(x["id"]) for x in all_assets):
+            reasons.append("identity_unknown")
         report["changes"].append({"key": key, "name": representative["name"], "before": b, "after": a,
             "delta": a - b, "first_seen": first, "reappeared": returned, "unverified_arrivals": unknown,
             "increase": increase, "decrease": decrease, "verified": verified,
-            "reason": "" if verified else "扫描覆盖、实时性、物品身份或分类尚未全部核实"})
+            "reason": "" if verified else "；".join(quality_messages(reasons)) or "饰品分类尚未核实"})
     return report
 
 
@@ -98,6 +117,8 @@ def save_daily(target, *, day, scanned_at, status, snapshot=None):
         row = DailyObservation(target_id=target.id, day=day)
         db.session.add(row)
     row.scanned_at, row.status = scanned_at, status
+    row.report_json = json.dumps({"quality": snapshot_quality(snapshot) if snapshot else
+                                  {"comparable": False, "reason_codes": [status]}}, ensure_ascii=False)
     row.assets_json = json.dumps(snapshot_assets(snapshot) if snapshot else [], ensure_ascii=False)
     prev_day = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
     previous = db.session.get(DailyObservation, (target.id, prev_day))
@@ -154,19 +175,43 @@ def dashboard_data(user, args):
     pending_ids = {j.target_id for j in job_rows if j.status in {"queued", "running"}}
     summary = {"targets": len(ids), "observed": len(observations), "comparable": 0,
                "private": 0, "failed": 0, "partial": 0, "baseline_only": 0,
-               "pending": len(pending_ids), "missing": len(set(ids) - observations.keys())}
+               "pending": len(pending_ids), "missing": len(set(ids) - observations.keys() - pending_ids)}
+    account_statuses = []
+    quality_counts = defaultdict(int)
     aggregates = {"signals": {}, "reappeared": {}, "pending": {}}
     for target in targets:
         row = observations.get(target.id)
+        sub = subscriptions.get(target.id)
+        label = " - ".join(v for v in (sub.remark if sub else None, target.persona_name, target.steamid) if v)
+        report = json.loads(row.report_json) if row else {}
+        codes = []
+        if target.id in pending_ids:
+            codes = ["pending"]
+        elif not row:
+            codes = ["missing"]
+        elif row.status in {"private", "failed"}:
+            codes = [row.status]
+        else:
+            if row.status != "ready":
+                codes.extend(report.get("quality", {}).get("reason_codes") or ["legacy_evidence"])
+            if report.get("baseline_only"):
+                codes.append("baseline_missing")
+            elif not report.get("comparable") and report.get("baseline_status") != "ready":
+                # 旧日报未保留基线证据，不猜测是哪一端完整。
+                codes.append("baseline_incomplete")
+        for code in set(codes):
+            quality_counts[code] += 1
+        account_statuses.append({"target_id": target.id, "label": label,
+            "status": "pending" if target.id in pending_ids else row.status if row else "missing",
+            "scanned_at": report.get("scanned_at"), "baseline_at": report.get("baseline_at"),
+            "comparable": report.get("comparable", False), "reasons": quality_messages(codes),
+            "reason_codes": list(dict.fromkeys(codes))})
         if not row:
             continue
         if row.status in {"private", "failed", "partial"}:
             summary[row.status] += 1
-        report = json.loads(row.report_json)
         summary["comparable"] += int(report.get("comparable", False))
         summary["baseline_only"] += int(report.get("baseline_only", False))
-        sub = subscriptions.get(target.id)
-        label = " - ".join(v for v in (sub.remark if sub else None, target.persona_name, target.steamid) if v)
         for change in report.get("changes", []):
             sections = []
             if change["verified"] and (change["increase"] or change["decrease"]):
@@ -233,6 +278,9 @@ def dashboard_data(user, args):
     status = "generating" if pending_ids else "complete" if summary["comparable"] == len(ids) and ids else "partial" if summary["comparable"] else "no_comparable"
     return {"date": day.isoformat(), "baseline_date": (day - timedelta(days=1)).isoformat(),
             "status": status, "summary": summary, "section": section, "items": rows,
+            "account_statuses": account_statuses,
+            "quality_summary": [{"code": c, "message": quality_messages([c])[0], "accounts": n}
+                                for c, n in sorted(quality_counts.items()) if quality_messages([c])],
             "page": page, "pages": max(1, (total + size - 1) // size), "total": total,
             "section_counts": {k: len(v) for k, v in aggregates.items()},
             "note": "首次发现不等于买入；再次出现不等于确定从组件取出。仅比较相邻日期早间深度扫描，未核实数据不进正式排行。历史识别从平台保留记录开始。"}

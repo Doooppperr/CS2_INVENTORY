@@ -1,0 +1,3 @@
+<script>
+(()=>{const key='cs2-inventory-theme',valid=['system','light','dark'];let preference='system';try{const saved=localStorage.getItem(key);if(valid.includes(saved))preference=saved}catch(_){}const systemDark=typeof matchMedia==='function'&&matchMedia('(prefers-color-scheme: dark)').matches;const effective=preference==='system'?(systemDark?'dark':'light'):preference;const root=document.documentElement;root.dataset.themePreference=preference;root.dataset.theme=effective;root.style.colorScheme=effective})();
+</script>

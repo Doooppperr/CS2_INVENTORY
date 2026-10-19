@@ -95,6 +95,7 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
         "errors": [str(value) for value in (result.get("errors") or [])],
         "_assets": list(assets.values()),
         "_scan_status": scan_quality(result),
+        "_quality": dict(result.get("quality") or {}),
     }
 
 
@@ -107,6 +108,7 @@ def public_payload(unified: Mapping[str, Any], *, scanned_at: str | None = None)
         "scanned_at": scanned_at,
         "elapsed_ms": int(unified.get("elapsed_ms", 0)),
         "errors": list(unified.get("errors") or []),
+        "quality": dict(unified.get("_quality") or {}),
     }
 
 

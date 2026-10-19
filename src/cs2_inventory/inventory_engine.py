@@ -555,7 +555,8 @@ def _item_type(item):
     for tag in item.get("tags") or []:
         if isinstance(tag, Mapping) and tag.get("category") == "Type":
             return _string(tag.get("internal_name") or tag.get("localized_tag_name"))
-    value = item.get("itemtype") or item.get("type") or ""
+    # 供应商 itemtype 是 ak-47 等武器子类型，itemgroup 才对应 rifle/pistol 类别。
+    value = item.get("itemgroup") or item.get("itemtype") or item.get("type") or ""
     return value if isinstance(value, str) else ""
 
 
@@ -565,8 +566,57 @@ def _freshness(source, item=None):
     item = item if isinstance(item, Mapping) else {}
     if "freshness=cached" in source or item.get("cached") is True or item.get("from_cache") is True:
         return "cached"
+    if "freshness=live" in source:
+        return "live"
     # no_cache 是请求意图，不是实时响应证明；无证据保留未知。
     return "unknown"
+
+
+def provider_page_freshness(headers, payload, *, state, mode, trade_locked, owner_session=False):
+    """只采信库存缓存标记；混合模式可能单独回退保护快照，不用总缓存头担保。"""
+    cache = str(headers.get("steamwebapi-cache", "")).lower()
+    if cache in {"yes", "true", "1"} or (isinstance(payload, Mapping) and
+            (payload.get("cached") is True or payload.get("from_cache") is True)):
+        return "cached"
+    # 已验证的供应商响应头 steamwebapi-cache=no 才是响应证据。
+    # 默认 legacy 保护路由隐含模式 4，可在 no_cache=1 时回退缓存，仍保持未知。
+    if state == "active" and cache == "no" and (
+        (mode == "0" and trade_locked == "0") or trade_locked == "1" or owner_session
+    ):
+        return "live"
+    return "unknown"
+
+
+def assess_inventory_quality(public_records, hidden_records, cached_records, official_total, errors, unverified=()):
+    """深浅扫描采用相同证据门槛；扫描方式本身不是完整或不完整的证据。"""
+    try:
+        from .observation import error_reason_codes
+    except ImportError:  # 兼容单文件 CLI。
+        from observation import error_reason_codes
+    records = [*public_records, *hidden_records]
+    codes = error_reason_codes(errors)
+    if official_total is None:
+        codes.append("total_unknown")
+    elif int(official_total) != sum(r.amount for r in records):
+        codes.append("count_mismatch")
+    if cached_records or any(r.observation == "cached" for r in records):
+        codes.append("cached_items")
+    if any(r.observation not in {"live", "cached"} for r in records):
+        codes.append("freshness_unknown")
+    if any(not r.assetid or r.assetid.startswith("synthetic:") for r in records):
+        codes.append("identity_unknown")
+    if unverified:
+        codes.append("unverified_items")
+    # 只有独立实时全集已核对总数时，补充接口 NO_ITEMS 才不影响完整性。
+    warnings = ["provider_no_items"] if set(codes) == {"provider_no_items"} else []
+    if warnings:
+        codes = []
+    return {"comparable": not codes, "reason_codes": list(dict.fromkeys(codes)), "warnings": warnings,
+            "official_total": official_total, "observed_total": sum(r.amount for r in records),
+            "live_count": sum(r.amount for r in records if r.observation == "live"),
+            "cached_count": sum(r.amount for r in cached_records)
+                + sum(r.amount for r in records if r.observation == "cached"),
+            "unknown_count": sum(r.amount for r in records if r.observation not in {"live", "cached"})}
 
 
 def asset_records_from_raw_payload(payload: Any, *, source: str) -> List[AssetRecord]:
@@ -796,6 +846,8 @@ def fetch_steamwebapi_raw_inventory(
     if steam_login_secure:
         params["steam_login_secure"] = steam_login_secure
         params["trade_locked"] = trade_locked
+    elif trade_locked != "0":
+        params["trade_locked"] = trade_locked
     if trade_url:
         params["trade_url"] = trade_url
 
@@ -826,8 +878,10 @@ def fetch_steamwebapi_raw_inventory(
             except SteamQueryError as exc:
                 errors.append(f"{page_label}: {exc}")
                 break
-            if isinstance(payload, Mapping) and (payload.get("cached") is True or payload.get("from_cache") is True):
-                page_label += ":freshness=cached"
+            freshness = provider_page_freshness(headers, payload, state=state, mode=mode,
+                                                trade_locked=trade_locked, owner_session=bool(steam_login_secure))
+            if freshness != "unknown":
+                page_label += f":freshness={freshness}"
             duration_ms = int((time.monotonic() - started) * 1000)
             error_text = _steamwebapi_error_text(payload)
             if error_text:
@@ -2433,7 +2487,7 @@ def run_max_coverage_query(
             timeout=timeout,
             trade_url=trade_url,
             steam_login_secure=steam_login_secure,
-            trade_locked=trade_locked,
+            trade_locked=trade_locked if steam_login_secure else "1",
             label="steamwebapi:parse=1:mode=2",
         )
         for page in parsed_fetch.pages:
@@ -2688,9 +2742,8 @@ def run_max_coverage_query(
     )
     return {
         "steamid": steamid,
-        "quality": {"comparable": not errors and not observed_hidden and official_total is not None
-            and int(official_total) == sum(r.amount for r in [*public_records, *live_hidden])
-            and all(r.observation == "live" for r in [*public_records, *live_hidden])},
+        "quality": assess_inventory_quality(public_records, live_hidden, observed_hidden,
+                                            official_total, errors, unverified_records),
         "owner_view": bool(owner_cookie),
         "protected_live": group_records_by_name(live_protected),
         "protected_observed": group_records_by_name(observed_protected),
@@ -2928,7 +2981,8 @@ def run_lightweight_query(
     )
     return {
         "steamid": steamid,
-        "quality": {"comparable": False},
+        "quality": assess_inventory_quality(public_records, live_hidden, observed_hidden,
+                                            official_total, errors),
         "owner_view": False,
         "protected_live": group_records_by_name(live_protected),
         "protected_observed": group_records_by_name(observed_protected),

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 
 from .app import create_app
 from .dashboard import save_daily
@@ -17,7 +17,36 @@ from .models import (
     TargetAssetHistory,
     utcnow,
 )
-from .observation import evidence_observation, private_errors, reliable_id, row_evidence
+from .observation import (
+    evidence_observation,
+    private_errors,
+    reliable_id,
+    row_evidence,
+    snapshot_quality,
+)
+
+
+def repair_diagnostics():
+    """仅补存可追溯的诊断，不更改历史状态、资产或统计结论。"""
+    count = 0
+    for row in DailyObservation.query.all():
+        report = json.loads(row.report_json or "{}")
+        changed = False
+        if not report.get("quality"):
+            snapshots = Snapshot.query.filter_by(target_id=row.target_id, scanned_at=row.scanned_at).all()
+            if len(snapshots) == 1:
+                report["quality"] = snapshot_quality(snapshots[0])
+                changed = True
+        if "baseline_status" not in report:
+            prev_day = (date.fromisoformat(row.day) - timedelta(days=1)).isoformat()
+            previous = db.session.get(DailyObservation, (row.target_id, prev_day))
+            report["baseline_status"] = previous.status if previous else None
+            changed = True
+        if changed:
+            row.report_json = json.dumps(report, ensure_ascii=False)
+            count += 1
+    db.session.commit()
+    return {"diagnostics_updated": count}
 
 
 def backfill():
@@ -79,6 +108,8 @@ def backfill():
 
 
 if __name__ == "__main__":
+    import sys
+
     app = create_app()
     with app.app_context():
-        print(json.dumps(backfill(), ensure_ascii=False))
+        print(json.dumps(repair_diagnostics() if "--diagnostics-only" in sys.argv else backfill(), ensure_ascii=False))

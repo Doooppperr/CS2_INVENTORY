@@ -400,5 +400,57 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(snapshot.coverage, "partial")
 
 
+    def test_diagnostics_repair_is_idempotent_and_never_promotes_old_data(self):
+        import gzip
+        import json
+
+        from cs2_inventory.reporting_backfill import repair_diagnostics
+        snapshot = self.day_snapshot(["1"], self.today, status="partial")
+        snapshot.errors_json = json.dumps(["官方公开库存: 网络请求失败：[Errno 101] Network is unreachable"])
+        snapshot.payload_gzip = gzip.compress(b"{}")
+        row = db.session.get(DailyObservation, (self.target.id, self.day))
+        report = json.loads(row.report_json)
+        report.pop("quality", None)
+        row.report_json = json.dumps(report)
+        db.session.commit()
+        before = row.assets_json
+        self.assertEqual(repair_diagnostics()["diagnostics_updated"], 1)
+        self.assertEqual(repair_diagnostics()["diagnostics_updated"], 0)
+        data = self.data()
+        self.assertEqual(row.status, "partial")
+        self.assertEqual(row.assets_json, before)
+        self.assertEqual(data["summary"]["comparable"], 0)
+        self.assertIn("steam_network", data["account_statuses"][0]["reason_codes"])
+        self.assertIn("legacy_evidence", data["account_statuses"][0]["reason_codes"])
+
+    def test_quality_details_follow_same_target_permissions(self):
+        other = self.add_target("76561198000000007", subscribe=False)
+        self.day_snapshot(["secret"], self.today, other, status="partial")
+        data = self.data()
+        self.assertNotIn(other.id, [r["target_id"] for r in data["account_statuses"]])
+        self.assertEqual(data["quality_summary"], [{"code": "missing", "message": "该日没有早间深度扫描记录", "accounts": 1}])
+
+    def test_pending_and_missing_are_not_double_counted(self):
+        batch = ScanBatch(slot_key=self.day + "-R2", kind="daily")
+        db.session.add(batch)
+        db.session.flush()
+        db.session.add(ScanJob(target_id=self.target.id, steamid=self.target.steamid, kind="daily", batch_id=batch.id))
+        db.session.commit()
+        data = self.data()
+        self.assertEqual(data["summary"]["pending"], 1)
+        self.assertEqual(data["summary"]["missing"], 0)
+        self.assertEqual(data["account_statuses"][0]["reason_codes"], ["pending"])
+
+    def test_dashboard_uses_shared_theme_and_quality_controls(self):
+        html = self.client.get('/app/dashboard').get_data(as_text=True)
+        self.assertIn('cs2-inventory-theme', html)
+        self.assertIn(':root[data-theme="dark"]', html)
+        self.assertIn('data-theme-selector', html)
+        self.assertIn('id="accountStatuses"', html)
+        self.assertIn('id="resetFilters"', html)
+        self.assertIn('/static/dashboard.css', html)
+        self.assertLess(html.index('cs2-inventory-theme'), html.index('<style>'))
+
+
 if __name__ == '__main__':
     unittest.main()
