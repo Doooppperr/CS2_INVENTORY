@@ -13,14 +13,11 @@ from typing import Any
 from flask import current_app
 
 from . import inventory_engine
+from .api_inventory import run_api_inventory_query
 from .app import create_app
 from .dashboard import record_daily_job
 from .database import db
 from .entitlements import scan_job_eligible
-from .inventory_engine import (
-    run_lightweight_query,
-    run_max_coverage_query,
-)
 from .localization import process_localization_job
 from .models import (
     LocalizationJob,
@@ -32,7 +29,7 @@ from .models import (
     utcnow,
 )
 from .network import steam_urlopen
-from .services import prune_expired, quota_allows_scan, state_set, store_snapshot
+from .services import prune_expired, state_set, store_snapshot
 from .unified import public_payload, unify_inventory
 
 _claim_lock = threading.Lock()
@@ -149,7 +146,7 @@ def estimate_inventory_credits(result: dict) -> int:
 
 def claim_next_job() -> int | None:
     with _claim_lock:
-        # 轻量任务必须留给 claim_batch_group，否则会误走七请求深度路径。
+        # 晚间任务按组领取，实际查询与其他任务采用相同引擎。
         job = (
             ScanJob.query.filter(ScanJob.status == "queued", ScanJob.kind != "daily_light")
             .order_by(ScanJob.created_at.asc(), ScanJob.id.asc())
@@ -247,90 +244,72 @@ def finish_batch(batch_id: int | None) -> None:
 
 def process_job(job_id: int) -> None:
     job = db.session.get(ScanJob, job_id)
-    if not job:
-        return
-    if job.kind == "daily_light":
+    if job and job.kind == "daily_light":
         process_batch_group([job.id])
         return
+    _run_inventory_job(job_id)
+
+
+def _run_inventory_job(job_id: int) -> None:
+    job = db.session.get(ScanJob, job_id)
+    if not job:
+        return
     if not scan_job_eligible(job):
-        job.status = "cancelled"
-        job.error = "监控账号权益已到期"
-        job.finished_at = utcnow()
-        db.session.commit()
+        _finish_job(job_id, status="cancelled", error="监控账号权益已到期")
         finish_batch(job.batch_id)
         return
-    is_admin_job = job.kind in {"manual", "instant"}
-    if not quota_allows_scan(admin=is_admin_job):
-        job.status = "failed"
-        job.error = "Inventory API 工作预算不足"
-        job.finished_at = utcnow()
+    charged = 0
+
+    def charge(result):
+        nonlocal charged
+        total = estimate_inventory_credits(result)
+        if total > charged:
+            db.session.add(QuotaUsage(endpoint="inventory", credits=total - charged, source=job.kind))
+            db.session.commit()  # 请求已发生；存储或后续分区失败不撤销已发生账目。
+            charged = total
+
+    def progress(result):
+        charge(result)
+        unified = unify_inventory(result)
         if job.target_id:
             target = db.session.get(SteamTarget, job.target_id)
-            if target:
-                target.scan_status = "failed"
-                target.last_error = job.error
-                target.last_scan_at = utcnow()
-                record_daily_job(job, target)
-        db.session.commit()
-        finish_batch(job.batch_id)
-        return
+            if target and scan_job_eligible(job):
+                store_snapshot(target, unified)
+                target.scan_status = "scanning"
+        else:
+            job.result_json = json.dumps(public_payload(unified, scanned_at=beijing_iso(utcnow())), ensure_ascii=False)
+        db.session.commit()  # 保护物品即时可读，不等普通分区结束。
 
     try:
         inventory_engine.REQUEST_THROTTLE = RATE_LIMITER.acquire
-        result = run_max_coverage_query(
-            job.steamid,
-            key=current_app.config["STEAMWEBAPI_KEY"],
-            language=current_app.config["ITEM_LANGUAGE"],
-            timeout=120,
-            trading_samples=3,
-            normal_samples=1,
-            include_mode1=True,
-            include_parse1=True,
-            parse1_samples=2,
-            include_public=True,
-            observation_cache_path=current_app.config["OBSERVATION_CACHE"],
-        )
+        result = run_api_inventory_query(job.steamid, key=current_app.config["STEAMWEBAPI_KEY"],
+            language=current_app.config["ITEM_LANGUAGE"], timeout=120, round_id=job.id, on_progress=progress)
+        charge(result)
         unified = unify_inventory(result)
-        credits = estimate_inventory_credits(result)
-        db.session.add(QuotaUsage(endpoint="inventory", credits=credits, source=job.kind))
-        db.session.commit()  # 请求已发生，后续存储失败也不能丢失额度账目。
         if job.target_id:
             target = db.session.get(SteamTarget, job.target_id)
             if not target:
                 raise RuntimeError("监控目标已删除")
-            if not target.persona_name or profile_refresh_due(
-                target.profile_updated_at, days=current_app.config["PROFILE_REFRESH_DAYS"]
-            ):
+            if not scan_job_eligible(job):
+                _finish_job(job_id, status="cancelled", error="监控账号权益已到期")
+                return
+            if not target.persona_name or profile_refresh_due(target.profile_updated_at, days=current_app.config["PROFILE_REFRESH_DAYS"]):
                 target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
                 target.profile_updated_at = utcnow()
             snapshot = store_snapshot(target, unified)
             record_daily_job(job, target, snapshot)
-            job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
+            job.result_json = json.dumps({"target_id": target.id, "diagnostics": {
+                **unified.get("_quality", {}), "elapsed_ms": unified["elapsed_ms"], "credits": charged,
+                "errors": unified["errors"]}}, ensure_ascii=False)
         else:
-            job.result_json = json.dumps(
-                public_payload(unified, scanned_at=beijing_iso(utcnow())),
-                ensure_ascii=False,
-            )
+            job.result_json = json.dumps(public_payload(unified, scanned_at=beijing_iso(utcnow())), ensure_ascii=False)
         job.status = "failed" if unified.get("_scan_status") in {"private", "failed"} else "completed"
-        job.error = ("已私密" if unified.get("_scan_status") == "private" else "扫描失败，保留上次有效库存") if job.status == "failed" else None
+        job.error = "; ".join(unified["errors"])[:2000] if job.status == "failed" else None
         job.finished_at = utcnow()
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        job = db.session.get(ScanJob, job_id)
-        if not job:
-            return
-        job.status = "failed"
-        job.error = str(exc)[:2000]
-        job.finished_at = utcnow()
-        if job.target_id:
-            target = db.session.get(SteamTarget, job.target_id)
-            if target:
-                target.scan_status = "failed"
-                target.last_error = job.error
-                target.last_scan_at = utcnow()
-                record_daily_job(job, target)
-        db.session.commit()
+        _finish_job(job_id, status="failed", error=str(exc))
     finally:
         fresh = db.session.get(ScanJob, job_id)
         finish_batch(fresh.batch_id if fresh else None)
@@ -358,69 +337,11 @@ def _finish_job(job_id: int, *, status: str, error: str | None = None) -> None:
 
 
 def process_batch_group(job_ids: list[int]) -> None:
-    """Run one lightweight scan group: one single-inventory request per SteamID.
-
-    Each job calls the single-inventory endpoint with parse=1 +
-    try_first_seven_days_blocked_items=2 + trade_locked=1 + no_cache=1 so trade-protected
-    items are visible without a login session. Failures are isolated per job.
-    """
-    jobs = [db.session.get(ScanJob, job_id) for job_id in job_ids]
-    jobs = [job for job in jobs if job is not None and job.status == "running"]
-    if not jobs:
-        return
-
-    inventory_engine.REQUEST_THROTTLE = RATE_LIMITER.acquire
-    completed = []
-    for job in jobs:
-        job = db.session.get(ScanJob, job.id)
-        if job is None or job.status != "running":
-            continue
-        if not scan_job_eligible(job):
-            _finish_job(job.id, status="cancelled", error="监控账号权益已到期")
-            completed.append(job.id)
-            continue
-        try:
-            result = run_lightweight_query(
-                job.steamid,
-                key=current_app.config["STEAMWEBAPI_KEY"],
-                language=current_app.config["ITEM_LANGUAGE"],
-                timeout=120,
-                observation_cache_path=current_app.config["OBSERVATION_CACHE"],
-                single_inventory=True,
-            )
-            unified = unify_inventory(result)
-            credits = estimate_inventory_credits(result)
-            db.session.add(QuotaUsage(endpoint="inventory", credits=credits, source="daily_light"))
-            db.session.commit()
-            if job.target_id:
-                target = db.session.get(SteamTarget, job.target_id)
-                if not target:
-                    raise RuntimeError("监控目标已删除")
-                if not target.persona_name or profile_refresh_due(
-                    target.profile_updated_at, days=current_app.config["PROFILE_REFRESH_DAYS"]
-                ):
-                    target.persona_name = fetch_persona_name(target.steamid) or target.persona_name
-                    target.profile_updated_at = utcnow()
-                snapshot = store_snapshot(target, unified)
-                record_daily_job(job, target, snapshot)
-                job.result_json = json.dumps({"target_id": target.id}, ensure_ascii=False)
-            else:
-                job.result_json = json.dumps(
-                    public_payload(unified, scanned_at=beijing_iso(utcnow())),
-                    ensure_ascii=False,
-                )
-            job.status = "failed" if unified.get("_scan_status") in {"private", "failed"} else "completed"
-            job.error = ("已私密" if unified.get("_scan_status") == "private" else "扫描失败，保留上次有效库存") if job.status == "failed" else None
-            job.finished_at = utcnow()
-            db.session.commit()
-        except Exception as exc:
-            db.session.rollback()
-            _finish_job(job.id, status="failed", error=str(exc))
-        completed.append(job.id)
-
-    for job_id in completed:
-        fresh = db.session.get(ScanJob, job_id)
-        finish_batch(fresh.batch_id if fresh else None)
+    """晚间任务与其他任务共用 API 单源引擎；各目标故障隔离。"""
+    for job_id in job_ids:
+        job = db.session.get(ScanJob, job_id)
+        if job and job.status == "running":
+            _run_inventory_job(job_id)
 
 
 def worker_loop(*, once: bool = False) -> None:

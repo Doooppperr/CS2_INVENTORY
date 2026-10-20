@@ -101,7 +101,7 @@ class DashboardTests(unittest.TestCase):
         return snapshot
 
     def data(self, **kwargs):
-        return dashboard_data(self.user, {"date": self.day, **kwargs})
+        return dashboard_data(self.admin if kwargs.get("section") == "pending" else self.user, {"date": self.day, **({"scope": "all"} if kwargs.get("section") == "pending" else {}), **kwargs})
 
     def test_first_snapshot_is_baseline_only(self):
         snapshot = self.day_snapshot(["1"], self.today)
@@ -235,7 +235,7 @@ class DashboardTests(unittest.TestCase):
             db.session.commit()
             result = {"coverage": {"status": "failed"}, "errors": ['steamwebapi:x: HTTP 403: {"error":"PRIVATE"}'],
                       "sources": {"steamwebapi:parse=1:mode=1": {"provider_requests": 1}}}
-            path = "run_max_coverage_query" if kind == "daily" else "run_lightweight_query"
+            path = "run_api_inventory_query"
             with mock.patch("cs2_inventory.worker." + path, return_value=result):
                 process_job(job.id) if kind == "daily" else process_batch_group([job.id])
             self.assertEqual(job.status, "failed")
@@ -248,7 +248,7 @@ class DashboardTests(unittest.TestCase):
         db.session.add(job)
         db.session.commit()
         result = {"coverage": {"status": "complete"}, "sources": {"steamwebapi:x": {"provider_requests": 1}}}
-        with mock.patch("cs2_inventory.worker.run_max_coverage_query", return_value=result), mock.patch(
+        with mock.patch("cs2_inventory.worker.run_api_inventory_query", return_value=result), mock.patch(
             "cs2_inventory.worker.store_snapshot", side_effect=RuntimeError("fixture")):
             process_job(job.id)
         self.assertEqual(job.status, "failed")

@@ -136,7 +136,11 @@ def _snapshot_payload(snapshot: Snapshot) -> bytes:
     for row in snapshot.items:
         counts[row.name] += row.amount
     snapshot.item_types = len(counts)
-    payload = {
+    try:
+        payload = json.loads(gzip.decompress(snapshot.payload_gzip))
+    except (ValueError, OSError, TypeError):
+        payload = {}
+    payload.update({
         "items": [{"name": name, "count": count} for name, count in sorted(counts.items())],
         "total_items": snapshot.total_items,
         "item_types": snapshot.item_types,
@@ -144,7 +148,7 @@ def _snapshot_payload(snapshot: Snapshot) -> bytes:
         "scanned_at": beijing_iso(snapshot.scanned_at),
         "elapsed_ms": snapshot.elapsed_ms,
         "errors": json.loads(snapshot.errors_json or "[]"),
-    }
+    })
     return gzip.compress(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 

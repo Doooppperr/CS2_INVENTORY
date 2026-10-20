@@ -5,6 +5,7 @@ import json
 from collections import defaultdict
 from datetime import date, timedelta, timezone
 
+from .auth import can_inventory_diagnostics
 from .database import db
 from .entitlements import entitlement_state
 from .models import (
@@ -54,6 +55,10 @@ def calculate_report(current, previous):
               "quality": json.loads(current.report_json or "{}").get("quality", {}),
               "baseline_quality": json.loads(previous.report_json or "{}").get("quality", {}) if previous else {}}
     if not previous or current.status in {"private", "failed"} or previous.status in {"private", "failed"}:
+        return report
+    current_policy = report["quality"].get("source_policy", "legacy")
+    previous_policy = report["baseline_quality"].get("source_policy", "legacy")
+    if current_policy != previous_policy:
         return report
     before = json.loads(previous.assets_json)
     after = json.loads(current.assets_json)
@@ -143,6 +148,8 @@ def record_daily_job(job, target, snapshot=None):
 
 
 def dashboard_data(user, args):
+    if args.get("section") == "pending" and not can_inventory_diagnostics(user):
+        raise PermissionError("页面不存在")
     today = utcnow().astimezone(BEIJING_TIMEZONE).date()
     try:
         day = date.fromisoformat(args.get("date") or today.isoformat())
@@ -213,6 +220,8 @@ def dashboard_data(user, args):
         summary["comparable"] += int(report.get("comparable", False))
         summary["baseline_only"] += int(report.get("baseline_only", False))
         for change in report.get("changes", []):
+            if not can_inventory_diagnostics(user) and not change.get("verified"):
+                continue
             sections = []
             if change["verified"] and (change["increase"] or change["decrease"]):
                 sections.append("signals")

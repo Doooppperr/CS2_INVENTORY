@@ -78,6 +78,10 @@ def admin_required(view):
     return wrapped
 
 
+def can_inventory_diagnostics(user: User | None) -> bool:
+    return bool(user and user.is_active and user.role == "admin" and user.username == "cs2inventory_admin")
+
+
 def user_json(user: User) -> dict:
     from .entitlements import entitlement_public
 
@@ -85,6 +89,7 @@ def user_json(user: User) -> dict:
         "id": user.id,
         "username": user.username,
         "role": user.role,
+        "can_view_inventory_diagnostics": can_inventory_diagnostics(user),
         "is_active": user.is_active,
         "created_at": beijing_iso(user.created_at),
         "last_login_at": beijing_iso(user.last_login_at),

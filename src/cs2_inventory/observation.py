@@ -5,6 +5,7 @@ import json
 import re
 
 QUALITY_MESSAGES = {
+    "api_refresh_incomplete": "本轮 API 分区尚未全部更新，保留各分区上次成功结果",
     "steam_network": "Steam 网络连接失败，本轮未完成公开库存校验",
     "steam_rate_limit": "Steam 请求限流，本轮未完成公开库存校验",
     "steam_unavailable": "Steam 公开库存校验未成功",
@@ -120,7 +121,7 @@ def private_errors(errors):
 
 def asset_evidence(asset):
     return {key: asset.get(key) for key in (
-        "sources", "observation", "market_name", "item_type",
+        "sources", "observation", "market_name", "item_type", "api_contexts",
     ) if asset.get(key) is not None}
 
 
@@ -144,6 +145,12 @@ def evidence_observation(evidence):
 
 def scan_quality(result):
     errors = result.get("errors") or []
+    quality = result.get("quality") or {}
+    if quality.get("source_policy") == "api_only_v1":
+        if quality.get("comparable"):
+            return "ready"
+        status = (result.get("coverage") or {}).get("status")
+        return status if status in {"private", "failed"} else "partial"
     if private_errors(errors):
         return "private"
     coverage = (result.get("coverage") or {}).get("status", "unknown")

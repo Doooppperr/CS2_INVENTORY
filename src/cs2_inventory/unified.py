@@ -17,6 +17,17 @@ INTERNAL_GROUPS = (
 
 def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
     """Merge reliable categories by assetid and retain explicit live protection."""
+    if "_api_assets" in result:
+        assets = list(result["_api_assets"])
+        counts = collections.Counter()
+        for asset in assets:
+            counts[asset["name"]] += int(asset["amount"])
+        return {"steamid": str(result.get("steamid") or ""),
+                "items": [{"name": name, "count": count} for name, count in sorted(counts.items())],
+                "total_items": sum(counts.values()), "item_types": len(counts),
+                "coverage": result["coverage"]["status"], "elapsed_ms": result.get("elapsed_ms", 0),
+                "errors": list(result.get("errors") or []), "_assets": assets,
+                "_scan_status": scan_quality(result), "_quality": dict(result["quality"])}
     assets: dict[str, dict[str, Any]] = {}
     synthetic_index = 0
     for group_name in INTERNAL_GROUPS:
@@ -100,8 +111,15 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def public_payload(unified: Mapping[str, Any], *, scanned_at: str | None = None) -> dict[str, Any]:
-    return {
-        "items": list(unified.get("items") or []),
+    items = list(unified.get("items") or [])
+    if (unified.get("_quality") or {}).get("source_policy") == "api_only_v1":
+        counts = collections.Counter()
+        for asset in unified.get("_assets") or []:
+            counts[(asset["name"], bool(asset.get("is_trade_protected")))] += int(asset["amount"])
+        items = [{"name": name, "count": count, "is_trade_protected": protected}
+                 for (name, protected), count in sorted(counts.items(), key=lambda item: (-int(item[0][1]), item[0][0]))]
+    data = {
+        "items": items,
         "total_items": int(unified.get("total_items", 0)),
         "item_types": int(unified.get("item_types", 0)),
         "coverage": str(unified.get("coverage") or "unknown"),
@@ -110,6 +128,23 @@ def public_payload(unified: Mapping[str, Any], *, scanned_at: str | None = None)
         "errors": list(unified.get("errors") or []),
         "quality": dict(unified.get("_quality") or {}),
     }
+    if data["quality"].get("source_policy") == "api_only_v1":
+        sections = {}
+        for section in ("protected", "other"):
+            context = data["quality"].get("api_contexts", {}).get(section, {})
+            counts = collections.Counter()
+            for asset in unified.get("_assets") or []:
+                if section in asset.get("api_contexts", []) and not (section == "other" and asset.get("is_trade_protected")):
+                    counts[(asset["name"], bool(asset.get("is_trade_protected")))] += int(asset["amount"])
+            sections[section] = {"items": [{"name": name, "count": count, "is_trade_protected": flag}
+                for (name, flag), count in sorted(counts.items())],
+                "total_items": sum(counts.values()) if context.get("complete") else None,
+                "updated_at": context.get("scanned_at") if context.get("complete") else None}
+        data["inventory_sections"] = sections
+        if not data["quality"].get("comparable"):
+            data["total_items"] = None
+            data["item_types"] = None
+    return data
 
 
 def evidence_json(asset: Mapping[str, Any]) -> str:

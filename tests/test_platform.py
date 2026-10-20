@@ -227,7 +227,8 @@ class PlatformTests(unittest.TestCase):
             user = User.query.filter_by(username="cs2inventory_user").one()
             for index in range(18):
                 target, _job, _created = add_monitor(user, f"7656119{3000000000 + index:010d}")
-            target.last_scan_at = expected
+            target.last_success_at = expected
+            target.last_scan_at = expected + timedelta(hours=1)
             db.session.commit()
         data = self.client.get("/api/monitors?page=1").get_json()
         self.assertEqual(data["latest_scan_at"], "2026-08-15T09:30:00+08:00")
@@ -382,13 +383,13 @@ class PlatformTests(unittest.TestCase):
                 "sources": {"steamwebapi:parse=1:mode=1": {"provider_requests": 1}},
             }
             from cs2_inventory.worker import claim_batch_group, process_batch_group
-            with mock.patch("cs2_inventory.worker.run_lightweight_query", return_value=fake_result) as light:
+            with mock.patch("cs2_inventory.worker.run_api_inventory_query", return_value=fake_result) as light:
                 claimed = claim_batch_group()
                 self.assertEqual(claimed, job_ids)
                 process_batch_group(claimed)
                 self.assertEqual(light.call_count, 3)
                 for call in light.call_args_list:
-                    self.assertTrue(call.kwargs.get("single_inventory"))
+                    self.assertIn("on_progress", call.kwargs)
             db.session.expire_all()
             for job_id in job_ids:
                 job = db.session.get(ScanJob, job_id)
@@ -417,7 +418,7 @@ class PlatformTests(unittest.TestCase):
                 job_ids.append(job.id)
             db.session.commit()
             from cs2_inventory.worker import claim_batch_group, process_batch_group
-            with mock.patch("cs2_inventory.worker.run_lightweight_query", side_effect=RuntimeError("network down")):
+            with mock.patch("cs2_inventory.worker.run_api_inventory_query", side_effect=RuntimeError("network down")):
                 claimed = claim_batch_group()
                 self.assertEqual(claimed, job_ids)
                 process_batch_group(claimed)
@@ -457,7 +458,7 @@ class PlatformTests(unittest.TestCase):
                     raise RuntimeError("single inventory timeout")
                 return fake_result
 
-            with mock.patch("cs2_inventory.worker.run_lightweight_query", side_effect=flaky):
+            with mock.patch("cs2_inventory.worker.run_api_inventory_query", side_effect=flaky):
                 claimed = claim_batch_group()
                 self.assertEqual(claimed, job_ids)
                 process_batch_group(claimed)
@@ -733,7 +734,7 @@ class PlatformTests(unittest.TestCase):
         }
         with self.app.app_context():
             job = ScanJob.query.order_by(ScanJob.id).first()
-            with mock.patch("cs2_inventory.worker.run_max_coverage_query", return_value=fake) as query, mock.patch("cs2_inventory.worker.fetch_persona_name", return_value="Steam User"):
+            with mock.patch("cs2_inventory.worker.run_api_inventory_query", return_value=fake) as query, mock.patch("cs2_inventory.worker.fetch_persona_name", return_value="Steam User"):
                 process_job(job.id)
             self.assertEqual(query.call_args.kwargs["language"], "schinese")
             db.session.expire_all()
@@ -761,11 +762,11 @@ class PlatformTests(unittest.TestCase):
         self.assertNotIn("库存总量", html)
         self.assertIn("itemSearch", html)
         self.assertIn("protected-item", html)
-        self.assertIn("\\u5904\\u4e8e\\u4ea4\\u6613\\u4fdd\\u62a4\\u6216\\u8fd1\\u65e5\\u521a\\u7ed3\\u675f", html)
+        self.assertIn("只看交易保护", html)
         self.assertIn('data-days="1"', html)
         self.assertIn('data-days="3"', html)
         self.assertIn('data-days="7"', html)
-        self.assertIn("requested_baseline_date", html)
+        self.assertIn("暂无可展示的变化", html)
         self.assertIn("q.billing_remaining", html)
         self.assertIn("q.warning_level", html)
         self.assertNotIn("latest_detected_at", html)

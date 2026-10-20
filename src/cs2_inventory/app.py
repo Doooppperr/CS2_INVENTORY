@@ -11,6 +11,7 @@ from werkzeug.security import check_password_hash
 from .auth import (
     USERNAME_RE,
     admin_required,
+    can_inventory_diagnostics,
     csrf_token,
     current_user,
     login_required,
@@ -31,6 +32,12 @@ from .entitlements import (
     revoke_activation_code,
     snapshot_query_for_user,
     state_allows_monitor_write,
+)
+from .inventory_views import (
+    business_payload,
+    complete_snapshot,
+    inventory_view,
+    is_api_snapshot,
 )
 from .models import (
     BEIJING_TIMEZONE,
@@ -249,7 +256,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         query = Subscription.query.filter_by(user_id=user.id).join(SteamTarget).order_by(SteamTarget.created_at.desc())
         page, pagination = canonical_pagination(query, per_page=app.config["PAGE_SIZE"])
         latest_scan_at = (
-            db.session.query(func.max(SteamTarget.last_scan_at))
+            db.session.query(func.max(SteamTarget.last_success_at))
             .join(Subscription, Subscription.target_id == SteamTarget.id)
             .filter(Subscription.user_id == user.id)
             .scalar()
@@ -331,11 +338,12 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"error": "监控不存在"}), 404
         target, subscription = access
         history = snapshot_query_for_user(user, target.id).order_by(Snapshot.scanned_at.desc()).all()
-        latest = history[0] if history else None
+        latest = complete_snapshot(history)
         return jsonify({
-            "monitor": target_public(target, include_latest=False) if subscription is None else monitor_public(subscription, user, include_latest=False),
+            "monitor": target_public(target, include_latest=False, user=user) if subscription is None else monitor_public(subscription, user, include_latest=False),
             "snapshot": snapshot_public(latest) if latest else None,
             "history": [snapshot_public(row, include_items=False) for row in history],
+            **inventory_view(target.id, user, rows=history),
         })
 
     @app.get("/api/monitors/<int:target_id>/snapshots/<int:snapshot_id>")
@@ -346,9 +354,10 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         if not access or not snapshot:
             return jsonify({"error": "快照不存在"}), 404
         target, _subscription = access
-        previous = snapshot_query_for_user(user, target.id).filter(
+        candidates = snapshot_query_for_user(user, target.id).filter(
             Snapshot.scanned_at < snapshot.scanned_at
-        ).order_by(Snapshot.scanned_at.desc()).first()
+        ).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
+        previous = complete_snapshot([row for row in candidates if is_api_snapshot(row) == is_api_snapshot(snapshot)])
         return jsonify({"snapshot": snapshot_public(snapshot), "diff": snapshot_diff(snapshot, previous)})
 
     @app.get("/api/monitors/<int:target_id>/compare")
@@ -361,10 +370,10 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         days = request.args.get("days", type=int)
         if days not in {1, 3, 7}:
             return jsonify({"error": "对比天数只支持 1、3、7"}), 400
-        current = (
+        current = complete_snapshot(
             snapshot_query_for_user(user, target.id)
             .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
-            .first()
+            .all()
         )
         if not current:
             return jsonify({
@@ -382,14 +391,15 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         local_start = datetime.combine(target_date, time.min, tzinfo=BEIJING_TIMEZONE)
         utc_start = local_start.astimezone(timezone.utc).replace(tzinfo=None)
         utc_end = (local_start + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None)
-        baseline = (
+        baseline_rows = (
             snapshot_query_for_user(user, target.id).filter(
                 Snapshot.scanned_at >= utc_start,
                 Snapshot.scanned_at < utc_end,
             )
             .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
-            .first()
+            .all()
         )
+        baseline = complete_snapshot([row for row in baseline_rows if is_api_snapshot(row) == is_api_snapshot(current)])
         return jsonify({
             "days": days,
             "requested_baseline_date": target_date.isoformat(),
@@ -596,7 +606,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @admin_required
     def admin_targets(_user):
         page, pagination = canonical_pagination(SteamTarget.query.order_by(SteamTarget.created_at.desc()), per_page=20)
-        return jsonify({"items": [target_public(row) for row in pagination.items], "page": page, "pages": pagination.pages, "total": pagination.total})
+        return jsonify({"items": [target_public(row, user=_user) for row in pagination.items], "page": page, "pages": pagination.pages, "total": pagination.total})
 
     @app.delete("/api/admin/targets/<int:target_id>")
     @admin_required
@@ -671,5 +681,18 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
                 "failed_jobs": LocalizationJob.query.filter_by(status="failed").count(),
             },
         })
+
+    @app.after_request
+    def inventory_presentation(response):
+        user = current_user()
+        if response.is_json and user and not can_inventory_diagnostics(user) and response.status_code < 400:
+            data = response.get_json()
+            if request.endpoint == "job_status":
+                data.pop("error", None)
+            if isinstance(data, dict) and "quality_summary" in data:
+                data["summary"] = {key: value for key, value in data.get("summary", {}).items() if key in {"targets", "observed"}}
+                data["status"] = "available" if data.get("items") else "empty"
+            response.set_data(app.json.dumps(business_payload(data)))
+        return response
 
     return app

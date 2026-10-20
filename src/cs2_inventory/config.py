@@ -33,7 +33,7 @@ class Config:
     INVENTORY_RESERVE = int(os.getenv("CS2_INVENTORY_RESERVE", "30000"))
     INVENTORY_CRITICAL_RESERVE = int(os.getenv("CS2_INVENTORY_CRITICAL_RESERVE", "15000"))
     INVENTORY_CREDITS_PER_REQUEST = int(os.getenv("CS2_INVENTORY_CREDITS_PER_REQUEST", "3"))
-    REQUESTS_PER_SCAN = int(os.getenv("CS2_REQUESTS_PER_SCAN", "7"))
+    REQUESTS_PER_SCAN = int(os.getenv("CS2_REQUESTS_PER_SCAN", "2"))
     PROFILE_REFRESH_DAYS = 7
     STEAMWEBAPI_KEY = os.getenv("STEAMWEBAPI_KEY", "").strip()
     ITEM_LANGUAGE = os.getenv("CS2_ITEM_LANGUAGE", "schinese").strip() or "schinese"

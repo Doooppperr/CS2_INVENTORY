@@ -269,6 +269,13 @@ def protected_snapshot_ids(*, now: datetime | None = None) -> set[int]:
             ).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).first()
             if row:
                 result.add(row.id)
+                from .inventory_views import complete_snapshot, section_snapshot_ids
+                rows = Snapshot.query.filter(Snapshot.target_id == sub.target_id,
+                    Snapshot.scanned_at <= user.activation_expires_at).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
+                result.update(section_snapshot_ids(rows))
+                complete = complete_snapshot(rows)
+                if complete:
+                    result.add(complete.id)
     return {value for value in result if value is not None}
 
 

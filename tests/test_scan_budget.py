@@ -61,15 +61,13 @@ class ScanBudgetTests(unittest.TestCase):
             "coverage": {"status": "partial"},
             "sources": {"steamwebapi:parse=1:mode=1": {"provider_requests": 1}},
         }
-        with mock.patch("cs2_inventory.worker.run_lightweight_query", return_value=fake) as light, \
-                mock.patch("cs2_inventory.worker.run_max_coverage_query") as deep, \
+        with mock.patch("cs2_inventory.worker.run_api_inventory_query", return_value=fake) as light, \
                 mock.patch("cs2_inventory.worker.fetch_persona_name", return_value="测试玩家"):
             work = claim_next_work()
             self.assertEqual(work, ("scan_group", [job.id]))
             _process_work(*work)
             light.assert_called_once()
-            self.assertTrue(light.call_args.kwargs["single_inventory"])
-            deep.assert_not_called()
+            self.assertIn("on_progress", light.call_args.kwargs)
         self.assertEqual(job.status, "completed")
         self.assertEqual(QuotaUsage.query.one().credits, 3)
         self.assertTrue(self.target.snapshots[0].items[0].is_trade_protected)
@@ -85,7 +83,7 @@ class ScanBudgetTests(unittest.TestCase):
     def test_process_job_defensively_routes_light_jobs(self):
         job = self.job("daily_light", status="running")
         with mock.patch("cs2_inventory.worker.process_batch_group") as group, \
-                mock.patch("cs2_inventory.worker.run_max_coverage_query") as deep:
+                mock.patch("cs2_inventory.worker.run_api_inventory_query") as deep:
             process_job(job.id)
             group.assert_called_once_with([job.id])
             deep.assert_not_called()
@@ -95,7 +93,7 @@ class ScanBudgetTests(unittest.TestCase):
         work = claim_next_work()
         Subscription.query.delete()
         db.session.commit()
-        with mock.patch("cs2_inventory.worker.run_lightweight_query") as query:
+        with mock.patch("cs2_inventory.worker.run_api_inventory_query") as query:
             _process_work(*work)
             query.assert_not_called()
         self.assertEqual(job.status, "cancelled")
@@ -132,7 +130,7 @@ class ScanBudgetTests(unittest.TestCase):
         self.assertEqual(calendars, ["OnCalendar=*-*-* 08:00:00 Asia/Shanghai", "OnCalendar=*-*-* 20:00:00 Asia/Shanghai"])
         status = quota_status()
         self.assertEqual(status["scheduled_scans_per_day"], 2)
-        self.assertEqual(status["estimated_scheduled_credits_per_target_day"], 24)
+        self.assertEqual(status["estimated_scheduled_credits_per_target_day"], 12)
 
     def test_renewed_subscription_excludes_previous_period_usage(self):
         state_set("official_quota_json", json.dumps({"available": True, "payload": {
@@ -167,7 +165,7 @@ class ScanBudgetTests(unittest.TestCase):
     def test_zero_provider_attempts_are_not_charged_as_seven_requests(self):
         from cs2_inventory.worker import estimate_inventory_credits
         self.assertEqual(estimate_inventory_credits({"sources": {"single": {"provider_requests": 0}}}), 0)
-        self.assertEqual(estimate_inventory_credits({"sources": {"legacy": {"requests": 7}}}), 21)
+        self.assertEqual(estimate_inventory_credits({"sources": {"legacy": {"requests": 7}}}), 6)
 
     def test_daily_usage_rolls_over_at_beijing_midnight(self):
         db.session.add_all([

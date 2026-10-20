@@ -208,7 +208,7 @@ class ScanStatusRecoveryTests(unittest.TestCase):
         db.session.add(job)
         db.session.commit()
         with mock.patch.object(engine, "fetch_public_inventory", return_value=self.public), mock.patch.object(
-            engine, "http_get_json_with_headers", side_effect=self.response({"steamwebapi-cache": "no"}),
+            engine, "http_get_json_with_headers", side_effect=lambda url, params, **kw: (kw["request_observer"]() or (self.protected if params["parse"] == "1" else {**self.public, "total_inventory_count": len(self.public["assets"])}), {"steamwebapi-cache": "no"}),
         ), mock.patch.object(engine, "localize_asset_records", side_effect=lambda rows, **kw: rows), mock.patch(
             "cs2_inventory.worker.fetch_persona_name", return_value="fixture",
         ), mock.patch("cs2_inventory.worker.RATE_LIMITER.acquire"):
@@ -216,9 +216,9 @@ class ScanStatusRecoveryTests(unittest.TestCase):
         self.assertEqual(job.status, "completed")
         self.assertEqual(target.scan_status, "ready")
         self.assertIsNone(target.last_error)
-        snapshot = Snapshot.query.filter_by(target_id=target.id).one()
+        snapshot = Snapshot.query.filter_by(target_id=target.id, coverage="complete").one()
         self.assertTrue(json.loads(gzip.decompress(snapshot.payload_gzip))["quality"]["comparable"])
-        self.assertEqual(QuotaUsage.query.one().credits, 3)
+        self.assertEqual(sum(row.credits for row in QuotaUsage.query.all()), 6)
         self.assertEqual(monitor_public(subscription, subscription.user)["scan_label"], "校验通过")
 
     def test_deep_normal_source_explicitly_reads_public_context(self):
