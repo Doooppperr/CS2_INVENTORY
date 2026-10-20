@@ -47,6 +47,7 @@ from .observation import (
     quality_messages,
     reliable_id,
     row_evidence,
+    scan_status_details,
     snapshot_quality,
 )
 from .scheduling import SCHEDULED_ROUNDS
@@ -147,6 +148,7 @@ def target_public(target: SteamTarget, *, include_latest: bool = True) -> dict:
         "persona_name": target.persona_name,
         "label": target_label(target),
         "scan_status": target.scan_status,
+        **scan_status_details(target.scan_status, snapshot_quality(snapshot) if snapshot else None, target.last_error),
         "last_scan_at": beijing_iso(target.last_scan_at),
         "last_success_at": beijing_iso(target.last_success_at),
         "last_error": target.last_error,
@@ -168,13 +170,17 @@ def monitor_public(subscription: Subscription, user: User, *, include_latest: bo
         )
     else:
         label = f"{target.persona_name} - {target.steamid}" if target.persona_name else target.steamid
+    scan_status = (("ready" if snapshot and snapshot.coverage in {"ok", "complete"} else "partial" if snapshot else "pending")
+                   if frozen_view else target.scan_status)
     return {
         "id": target.id,
         "steamid": target.steamid,
         "persona_name": target.persona_name,
         "remark": subscription.remark,
         "label": label,
-        "scan_status": ("ready" if snapshot and snapshot.coverage in {"ok", "complete"} else "partial" if snapshot else "pending") if frozen_view else target.scan_status,
+        "scan_status": scan_status,
+        **scan_status_details(scan_status, snapshot_quality(snapshot) if snapshot else None,
+                              None if frozen_view else target.last_error),
         "last_scan_at": beijing_iso(snapshot.scanned_at if frozen_view and snapshot else target.last_scan_at),
         "last_success_at": beijing_iso(snapshot.scanned_at if frozen_view and snapshot else target.last_success_at),
         "last_error": None if frozen_view else target.last_error,
@@ -296,7 +302,7 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot | None:
     previous_seen = {
         item.asset_key: (item.first_seen_at or previous.scanned_at)
         for item in previous.items
-        if evidence_observation(row_evidence(item)) != "cached"
+        if evidence_observation(row_evidence(item)) == "live"
     } if previous else {}
     previous_seen.update({key: row.first_seen_at for key, row in history.items()})
     language = current_app.config.get("ITEM_LANGUAGE", "schinese")
@@ -319,7 +325,7 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot | None:
         asset.setdefault("observation", "live")
         key = asset["asset_key"]
         first_seen = previous_seen.get(key, scanned_at)
-        if reliable_id(key) and asset.get("observation") != "cached":
+        if reliable_id(key) and asset.get("observation") == "live":
             if key in history:
                 history[key].last_seen_at = scanned_at
             else:
@@ -370,18 +376,20 @@ def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
         current_counts[stable_name(row)] += row.amount
     for row in previous_rows.values():
         previous_counts[stable_name(row)] += row.amount
-    new_counts, returns, uncertain, missing = Counter(), Counter(), Counter(), Counter()
-    complete = bool(previous and current.coverage in {"ok", "complete"}
-                    and previous.coverage in {"ok", "complete"})
+    new_counts, returns, confirmed_missing, closed_history = Counter(), Counter(), Counter(), Counter()
+    uncertain, missing = {}, {}
+    current_verified = current.coverage in {"ok", "complete"} and snapshot_quality(current).get("comparable", False)
+    complete = bool(previous and current_verified and previous.coverage in {"ok", "complete"}
+                    and snapshot_quality(previous).get("comparable", False))
     history = {row.asset_key: row.first_seen_at for row in TargetAssetHistory.query.filter_by(target_id=current.target_id)}
     if previous:
         for key, row in current_rows.items():
-            if key in previous_rows:
-                continue
             name = stable_name(row)
             evidence = row_evidence(row)
             if not reliable_id(key) or evidence_observation(evidence) != "live":
-                uncertain[name] += row.amount
+                uncertain[key] = row
+                continue
+            if key in previous_rows:
                 continue
             seen = history.get(key, row.first_seen_at or current.scanned_at)
             if _datetime_sort_key(seen) <= _datetime_sort_key(previous.scanned_at):
@@ -390,7 +398,14 @@ def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
                 new_counts[name] += row.amount
         for key, row in previous_rows.items():
             if key not in current_rows:
-                missing[stable_name(row)] += row.amount
+                # 旧基线整体不完整，不否定其中已经实时确认过的单件资产。
+                # 本次完整实时库存足以核验这些资产的缺失，无需等待旧基线升级。
+                if current_verified:
+                    counts = (confirmed_missing if reliable_id(key)
+                              and evidence_observation(row_evidence(row)) == "live" else closed_history)
+                    counts[stable_name(row)] += row.amount
+                else:
+                    missing[key] = row
     removed, changed = [], []
     for name in sorted(set(current_counts) | set(previous_counts)):
         before, after = previous_counts[name], current_counts[name]
@@ -402,10 +417,55 @@ def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
             changed.append({"name": name, "before": before, "after": after, "delta": after - before})
     def rows(counts):
         return [{"name": name, "count": amount} for name, amount in sorted(counts.items()) if amount]
+
+    def pending_rows(candidates):
+        if not candidates:
+            return []
+        # 仅查询本目标、当前时间以前的候选资产；读取对比接口不调用外部 API、不续期。
+        evidence_rows = db.session.query(Snapshot.scanned_at, SnapshotItem.asset_key, SnapshotItem.evidence_json).join(
+            SnapshotItem, SnapshotItem.snapshot_id == Snapshot.id).filter(
+            Snapshot.target_id == current.target_id, Snapshot.scanned_at <= current.scanned_at,
+            SnapshotItem.asset_key.in_(list(candidates))).order_by(Snapshot.scanned_at).all()
+        first_observed, last_live = {}, {}
+        for scanned_at, key, evidence in evidence_rows:
+            first_observed.setdefault(key, scanned_at)
+            try:
+                parsed = json.loads(evidence or "{}")
+            except (TypeError, ValueError):
+                parsed = {}
+            if isinstance(parsed, dict) and evidence_observation(parsed) == "live":
+                last_live[key] = scanned_at
+        scan_times = [r[0] for r in db.session.query(Snapshot.scanned_at).filter(
+            Snapshot.target_id == current.target_id, Snapshot.scanned_at <= current.scanned_at).order_by(Snapshot.scanned_at)]
+        groups = {}
+        for key, row in candidates.items():
+            confirmed_at = last_live.get(key)
+            since = (next((t for t in scan_times if _datetime_sort_key(t) > _datetime_sort_key(confirmed_at)), current.scanned_at)
+                     if confirmed_at else first_observed.get(key, previous.scanned_at))
+            name = stable_name(row)
+            group = groups.setdefault(name, {"name": name, "count": 0, "since": since, "confirmed": confirmed_at})
+            group["count"] += row.amount
+            if _datetime_sort_key(since) < _datetime_sort_key(group["since"]):
+                group["since"] = since
+            if confirmed_at and (not group["confirmed"] or _datetime_sort_key(confirmed_at) < _datetime_sort_key(group["confirmed"])):
+                group["confirmed"] = confirmed_at
+        return [{"name": g["name"], "count": g["count"], "pending_since": beijing_iso(g["since"]),
+                 "last_confirmed_at": beijing_iso(g["confirmed"]),
+                 "pending_days": max(0, int((_datetime_sort_key(current.scanned_at) - _datetime_sort_key(g["since"])) // 86400))}
+                for _, g in sorted(groups.items())]
+
+    if not complete and current_verified:
+        removed = rows(confirmed_missing)
+    comparison_note = ("本次完整库存已逐件核验历史实时资产；旧基线未核实的观察单独结束，不计为确定移除。"
+                       if current_verified and not complete else
+                       "两次库存均已通过校验。" if complete else
+                       "本次仍有待核验项；持续未见显示起始时间，不据此推断卖出或移除。")
     return {"from_snapshot_id": previous.id if previous else None, "to_snapshot_id": current.id,
             "added": rows(new_counts), "removed": removed, "changed": changed,
-            "reappeared": rows(returns), "unconfirmed": rows(missing) if not complete else [],
-            "pending": rows(uncertain), "comparable": complete, "baseline_only": previous is None,
+            "reappeared": rows(returns), "unconfirmed": pending_rows(missing) if not current_verified else [],
+            "pending": pending_rows(uncertain), "historical_closed": rows(closed_history),
+            "removal_comparable": bool(previous and current_verified), "comparison_note": comparison_note,
+            "comparable": complete, "baseline_only": previous is None,
             "note": "首次发现不等于买入；再次出现可能来自组件取出或此前漏扫。"}
 
 

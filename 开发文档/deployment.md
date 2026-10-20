@@ -1,4 +1,14 @@
-# 部署（当前规范：2026-10-14，1.4.2）
+# 部署（当前规范：2026-10-20）
+
+## 大面积“数据不完整”诊断与轻量扫描修复（2026-10-20）
+
+1. 只读统计线上 `scan_status` 和快照 `quality.reason_codes`；分别识别实时性未知、历史缓存、真实数量缺口和上游错误，不批量改写状态或历史早间基线。
+2. 轻量扫描改用严格 context 16：`parse=1`、`try_first_seven_days_blocked_items=2`、`trade_locked=1`、`no_cache=1`，公开 context 2 继续由 Steam 校验；深度普通来源显式选择 context 2。
+3. 执行全量 unittest、Ruff、模板 JavaScript 语法检查和 `git diff --check`；回归真实响应解析至 Worker 存储和配额账目，验证缓存、缺件和请求失败仍阻止确认移除。
+4. 推送 main，以同一完整提交归档并比对 SHA256，执行 `deploy/release.sh <archive> <commit> --no-migrations`。按既有发布脚本停写、SQLite backup API 备份、切换版本、恢复四个服务/定时器；保留 HealthDoc。
+5. 通过正常 Worker 先执行少量轻量补扫，验证实时证据、库存保护标签及 API 展示字段；通过后每个有效目标最多补扫一次，记录任务清单及实际配额，不创建新的每日基线。
+6. 核验 GitHub/main、服务器 current、本地 HEAD 一致，HTTPS `/ready` 返回正常、数据库完整性与外键正常、账户和订阅保持、四个单元 active、两个 timer enabled。真实缺件、缓存和私密仍显示具体原因。
+7. 回退在独立副本验证源码哈希及旧行为；生产需要时仅执行 `deploy/rollback.sh <旧release> <pre-deploy备份> --code-only`，不覆盖实时数据库。
 
 ## 额度修复与双轮发布（2026-10-14）
 

@@ -615,7 +615,7 @@ class MaxCoverageTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             cache_path = str(Path(directory) / "observations.json")
-            live = self._asset("p1", "c1", "0", "Sticker | Fnatic (Holo)", 2)
+            live = dataclasses.replace(self._asset("p1", "c1", "0", "Sticker | Fnatic (Holo)", 2), observation="live")
             first_live, first_observed = apply_observation_cache(
                 "76561198000000000", [live], set(), cache_path=cache_path, now=1000
             )
@@ -863,7 +863,7 @@ class BatchQueryTests(unittest.TestCase):
         self.assertIn("steam_public_contextid2", result["sources"])
         self.assertIn("steamwebapi:batch", result["sources"])
 
-    def test_run_lightweight_single_inventory_uses_parse1_mode1_no_cache(self):
+    def test_run_lightweight_single_inventory_uses_strict_protected_context(self):
         import tempfile
         from pathlib import Path
 
@@ -894,7 +894,7 @@ class BatchQueryTests(unittest.TestCase):
             def __init__(self):
                 self.pages = [
                     RawInventoryPage(
-                        source="steamwebapi:parse=1:mode=1:sample=1:page=1",
+                        source="steamwebapi:parse=1:mode=2:sample=1:page=1",
                         payload=single_payload,
                         item_count=len(single_payload),
                         total_inventory_count=2,
@@ -928,12 +928,13 @@ class BatchQueryTests(unittest.TestCase):
                     observation_cache_path=cache,
                 )
         self.assertEqual(raw.call_count, 1)
-        self.assertEqual(captured.get("mode"), "1")
+        self.assertEqual(captured.get("mode"), "2")
+        self.assertEqual(captured.get("trade_locked"), "1")
         self.assertEqual(captured.get("parse"), "1")
         self.assertEqual(captured.get("no_cache"), "1")
         self.assertEqual(result["counts"]["protected_live"], 1)
         self.assertEqual(result["protected_live"][0]["name"], "New Locked Skin")
-        self.assertEqual(result["sources"]["steamwebapi:parse=1:mode=1"]["provider_requests"], 1)
+        self.assertEqual(result["sources"]["steamwebapi:parse=1:mode=2"]["provider_requests"], 1)
         self.assertNotIn("steamwebapi:batch", result["sources"])
         self.assertEqual(result["coverage"]["status"], "partial")
 
@@ -956,7 +957,7 @@ class BatchQueryTests(unittest.TestCase):
                 self.upstream_item_counts = []
                 self.sources = []
                 self.total_inventory_counts = []
-                self.errors = ["steamwebapi:parse=1:mode=1:sample=1:page=1: HTTP 502"]
+                self.errors = ["steamwebapi:parse=1:mode=2:sample=1:page=1: HTTP 502"]
                 self.request_attempts = 1
 
         with mock.patch("cs2_inventory.inventory_engine.fetch_public_inventory", return_value=public_payload), \
@@ -977,7 +978,7 @@ class BatchQueryTests(unittest.TestCase):
         # 单库存端点失败但官方公开集可用 → degraded 而非 failed
         self.assertEqual(result["coverage"]["status"], "degraded")
         self.assertTrue(any("HTTP 502" in message for message in result["errors"]))
-        self.assertEqual(result["sources"]["steamwebapi:parse=1:mode=1"]["provider_requests"], 1)
+        self.assertEqual(result["sources"]["steamwebapi:parse=1:mode=2"]["provider_requests"], 1)
         public_names = {row["name"] for row in result["public"]}
         self.assertIn("Public Skin", public_names)
 

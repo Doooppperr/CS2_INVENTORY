@@ -1476,9 +1476,14 @@ def _apply_observation_cache_unlocked(
     account = cache.get(steamid)
     if not isinstance(account, dict):
         account = {}
+    previous_account = dict(account)
 
     for assetid in list(account):
         row = account.get(assetid)
+        if isinstance(row, dict):
+            # 旧版本也可能把未知响应写成“再次命中”；读取时修正其无限续期。
+            anchor = _int(row.get("last_verified_at"), 0) or _int(row.get("first_seen"), now)
+            row["expires_at"] = min(_int(row.get("expires_at"), 0), anchor + ttl_seconds)
         if (
             not isinstance(row, dict)
             or assetid in public_set
@@ -1487,9 +1492,23 @@ def _apply_observation_cache_unlocked(
             account.pop(assetid, None)
 
     for assetid, record in live_by_assetid.items():
-        previous = account.get(assetid) if isinstance(account.get(assetid), dict) else {}
+        previous = previous_account.get(assetid) if isinstance(previous_account.get(assetid), dict) else {}
         protected_until = int(getattr(record, "protected_until", 0) or 0)
-        expires_at = max(now + ttl_seconds, protected_until + 12 * 3600)
+        verified = record.observation == "live"
+        if not verified and not previous:
+            # 未核实响应可展示为本次观察，但不创建可反复补全的历史资产。
+            continue
+        first_seen = _int(previous.get("first_seen"), now) or now
+        last_verified = now if verified else _int(previous.get("last_verified_at"), 0)
+        if verified:
+            expires_at = max(now + ttl_seconds, protected_until + 12 * 3600)
+        else:
+            # 缓存/未知响应不是再次实时命中，不能每轮续期或推迟保护截止。
+            anchor = last_verified or first_seen
+            expires_at = min(_int(previous.get("expires_at"), anchor + ttl_seconds), anchor + ttl_seconds)
+            if expires_at <= now:
+                account.pop(assetid, None)
+                continue
         protection_state = getattr(record, "protection_state", "") or (
             "active"
             if (
@@ -1514,8 +1533,9 @@ def _apply_observation_cache_unlocked(
             "protected_until": protected_until,
             "protection_state": protection_state,
             "sources": sorted(set(previous_sources_list) | set(record.sources)),
-            "first_seen": _int(previous.get("first_seen"), now) or now,
-            "last_seen": now,
+            "first_seen": first_seen,
+            "last_seen": now if verified or not previous else _int(previous.get("last_seen"), first_seen),
+            "last_verified_at": last_verified,
             "expires_at": expires_at,
         }
 
@@ -2409,7 +2429,7 @@ def run_max_coverage_query(
             timeout=timeout,
             trade_url=trade_url,
             steam_login_secure=steam_login_secure,
-            trade_locked=trade_locked,
+            trade_locked="0",
             label="steamwebapi:parse=0:mode=0",
         )
         for page in normal_fetch.pages:
@@ -2798,9 +2818,9 @@ def run_lightweight_query(
     """Lightweight refresh that can see trade-protected items.
 
     single_inventory=True fetches the single-inventory endpoint once with
-    parse=1 + try_first_seven_days_blocked_items=1 + no_cache=1 (mode "1":
-    trading inventory first, falling back to the normal inventory), which
-    returns trade-locked items without a login session. Otherwise (or when
+    parse=1 + try_first_seven_days_blocked_items=2 + trade_locked=1 + no_cache=1.
+    显式读取 context 16，禁止混合模式在实时失败后静默回退保护缓存；
+    context 2 仍由官方公开接口提供。Otherwise (or when
     pre-fetched batch_items are given) the legacy batch parse=1 payload is
     used. Both paths mirror the run_max_coverage_query result shape so
     unify_inventory consumes them identically.
@@ -2837,20 +2857,21 @@ def run_lightweight_query(
         single_fetch = fetch_steamwebapi_raw_inventory(
             steamid,
             key=key or "",
-            mode="1",
+            mode="2",
             parse="1",
             language=language,
             no_cache="1",
+            trade_locked="1",
             samples=1,
             timeout=timeout,
-            label="steamwebapi:parse=1:mode=1",
+            label="steamwebapi:parse=1:mode=2",
         )
         classification_records = []
         for page in single_fetch.pages:
             classification_records.extend(
                 asset_records_from_parsed_payload(page.payload, source=page.source, now=now)
             )
-        sources["steamwebapi:parse=1:mode=1"] = _sources_entry(
+        sources["steamwebapi:parse=1:mode=2"] = _sources_entry(
             len(single_fetch.pages),
             single_fetch.upstream_item_counts,
             error="；".join(single_fetch.errors),
@@ -2977,7 +2998,7 @@ def run_lightweight_query(
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     note = (
-        "轻量刷新：单库存端点 parse=1 + try_first_seven_days_blocked_items=1 + no_cache=1，"
+        "轻量刷新：单库存端点 parse=1 + try_first_seven_days_blocked_items=2 + trade_locked=1 + no_cache=1，"
         "可直接发现处于交易保护中的新获得物品；公开集由 Steam 官方接口交叉验证，"
         "历史保护知识由10天观测缓存补全，每日深度轮（R2）多源复核。"
         "hidden_gap 为官方计数与已观测隐藏资产的差值。"

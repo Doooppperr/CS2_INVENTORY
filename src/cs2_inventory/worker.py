@@ -361,7 +361,7 @@ def process_batch_group(job_ids: list[int]) -> None:
     """Run one lightweight scan group: one single-inventory request per SteamID.
 
     Each job calls the single-inventory endpoint with parse=1 +
-    try_first_seven_days_blocked_items=1 + no_cache=1 so trade-protected
+    try_first_seven_days_blocked_items=2 + trade_locked=1 + no_cache=1 so trade-protected
     items are visible without a login session. Failures are isolated per job.
     """
     jobs = [db.session.get(ScanJob, job_id) for job_id in job_ids]

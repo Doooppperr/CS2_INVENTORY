@@ -56,6 +56,29 @@ def quality_messages(codes):
     return [QUALITY_MESSAGES[c] for c in dict.fromkeys(codes) if c in QUALITY_MESSAGES]
 
 
+def scan_status_details(status, quality=None, last_error=None):
+    """区分扫描执行状态和可比性，展示具体待核验项，不把历史补全当作抓取失败。"""
+    labels = {"ready": "校验通过", "private": "已私密", "failed": "扫描失败",
+              "queued": "排队中", "running": "扫描中", "pending": "等待扫描"}
+    quality = quality or {}
+    codes = set(quality.get("reason_codes") or [])
+    label = labels.get(status, "待核验")
+    if status == "partial":
+        if codes & {"steam_network", "steam_rate_limit", "steam_unavailable", "provider_error", "pagination"}:
+            label = "部分来源异常"
+        elif codes & {"count_shortfall", "count_mismatch"}:
+            label = "数量待核对"
+        elif "cached_items" in codes:
+            label = "含历史记录"
+        elif "freshness_unknown" in codes:
+            label = "实时性待核验"
+    detail = last_error or ""
+    if status == "partial":
+        detail = "；".join(quality_messages(quality.get("reason_codes") or [])) or detail
+        detail = (detail + "；" if detail else "") + "本轮已获取的库存可查看，待核验项不用于确认物品移除"
+    return {"scan_label": label, "scan_detail": detail}
+
+
 def snapshot_quality(snapshot):
     """读取已保存的校验证据；旧快照只诊断，不事后升级为完整。"""
     import gzip

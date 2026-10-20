@@ -7,7 +7,7 @@
   const signed = value => `${value>0?'+':''}${value}`;
   const monitorUrl = id => `${root.dataset.app.replace(/\/$/,'')}/monitors/${encodeURIComponent(id)}`;
   let page=1, pages=1, generation=0, loading=false;
-  const stateNames={ready:'校验通过',partial:'数据不完整',private:'已私密',failed:'扫描失败',pending:'待扫描 / 扫描中',missing:'没有早间记录'};
+  const stateNames={ready:'校验通过',partial:'待核验',private:'已私密',failed:'扫描失败',pending:'待扫描 / 扫描中',missing:'没有早间记录'};
   const clear = () => {
     for(const id of ['rows','stats','qualityReasons','accountStatuses'])$(id).replaceChildren();
     $('quality').textContent='';$('note').textContent='';$('page').textContent='—';
