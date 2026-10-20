@@ -79,10 +79,11 @@ class ScanQualityTests(unittest.TestCase):
             self.assertFalse(quality["comparable"])
 
     def test_provider_freshness_requires_inventory_header_and_nonfallback_route(self):
-        def freshness(headers, mode="2", trade_locked="0", payload=None):
+        def freshness(headers, mode="2", trade_locked=None, payload=None):
             return engine.provider_page_freshness(headers, payload or [], state="active", mode=mode, trade_locked=trade_locked)
         self.assertEqual(freshness({"steamwebapi-cache": "no"}), "unknown")  # 隐含模式 4。
         self.assertEqual(freshness({"steamwebapi-cache": "no"}, trade_locked="1"), "live")
+        self.assertEqual(freshness({"steamwebapi-cache": "no"}, trade_locked="0"), "live")
         self.assertEqual(freshness({"steamwebapi-cache": "no"}, mode="0"), "live")
         self.assertEqual(freshness({"cf-cache-status": "MISS"}, trade_locked="1"), "unknown")
         self.assertEqual(freshness({"steamwebapi-cache": "yes"}, trade_locked="1"), "cached")

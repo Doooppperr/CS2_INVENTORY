@@ -57,3 +57,7 @@ sudo -u cs2inventory env PYTHONPATH=/opt/cs2-inventory/current/src CS2_STATE_DIR
 - 对比接口逐件核验：本次完整实时库存可以核验旧基线中确曾实时命中的资产，即使旧基线整体不完整；旧缓存/未知观察不会因此被算作确定移除，而进入 `historical_closed`。本次仍不完整时，不以持续天数替代实时证据。
 - `pending`、`unconfirmed` 增加 `pending_since`、`pending_days`、`last_confirmed_at`；界面显示持续天数和日期。未知响应不刷新资产的实时历史；对比操作只读，不触发上游请求或重新续期。
 - 旧日报基线不重写；日报总量的可比性仍要求两日完整。快照对比新增 `removal_comparable` 和 `comparison_note`，明确区分整体可比与历史实时单件已核验。
+
+### 数量缺口的按需补查
+
+若官方公开 context 2 与严格实时 context 16 的资产并集仍少于已取得的声明总数，轻量轮追加一次交易路径 context 2（`parse=0`、`try_first_seven_days_blocked_items=2`、显式 `trade_locked=0`）。该路径可取回已结束保护但尚未公开的物品；普通无缺口目标仍只调用一次付费请求。显式 `0` 必须发送，不能因默认值逻辑被省略为隐含混合模式。补查分页、缓存证据与请求次数同样校验和记账；通常总计 6 credits，有真实缺口或上游错误时仍保留待核验。

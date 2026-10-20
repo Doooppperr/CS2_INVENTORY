@@ -384,12 +384,12 @@ def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
     history = {row.asset_key: row.first_seen_at for row in TargetAssetHistory.query.filter_by(target_id=current.target_id)}
     if previous:
         for key, row in current_rows.items():
+            if key in previous_rows:
+                continue
             name = stable_name(row)
             evidence = row_evidence(row)
             if not reliable_id(key) or evidence_observation(evidence) != "live":
                 uncertain[key] = row
-                continue
-            if key in previous_rows:
                 continue
             seen = history.get(key, row.first_seen_at or current.scanned_at)
             if _datetime_sort_key(seen) <= _datetime_sort_key(previous.scanned_at):

@@ -28,7 +28,7 @@ from cs2_inventory.services import (
     target_public,
 )
 from cs2_inventory.unified import unify_inventory
-from cs2_inventory.worker import process_batch_group
+from cs2_inventory.worker import estimate_inventory_credits, process_batch_group
 
 
 class ScanStatusRecoveryTests(unittest.TestCase):
@@ -98,6 +98,46 @@ class ScanStatusRecoveryTests(unittest.TestCase):
         self.assertTrue(unified["_assets"][0]["is_trade_protected"])
         self.assertEqual(result["quality"]["unknown_count"], 0)
         self.assertEqual(result["sources"]["steamwebapi:parse=1:mode=2"]["provider_requests"], 1)
+        self.assertEqual(request.call_count, 1)
+
+    def test_gap_fetches_live_partner_context2_once_and_counts_actual_requests(self):
+        self.public["total_inventory_count"] = 3
+        extra = {"assets": [{"appid": "730", "contextid": "2", "assetid": "3", "classid": "300", "instanceid": "0"}],
+                 "descriptions": [{"classid": "300", "instanceid": "0", "name": "已解锁仍隐藏的皮肤"}],
+                 "total_inventory_count": 1}
+
+        def response(url, params, **kwargs):
+            kwargs["request_observer"]()
+            return (extra if params["parse"] == "0" else self.protected), {"steamwebapi-cache": "no"}
+
+        with mock.patch.object(engine, "fetch_public_inventory", return_value=self.public), mock.patch.object(
+            engine, "http_get_json_with_headers", side_effect=response,
+        ) as request, mock.patch.object(engine, "localize_asset_records", side_effect=lambda rows, **kw: rows):
+            result = engine.run_lightweight_query(
+                "76561198000000001", key="fixture", single_inventory=True,
+                observation_cache_path=str(self.root / "observations.json"),
+            )
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args.args[1]["trade_locked"], "0")
+        self.assertEqual(request.call_args.args[1]["try_first_seven_days_blocked_items"], "2")
+        self.assertEqual(unify_inventory(result)["_scan_status"], "ready")
+        self.assertEqual(unify_inventory(result)["total_items"], 3)
+        self.assertEqual(estimate_inventory_credits(result), 6)
+
+    def test_explicit_context2_zero_is_sent_and_has_live_response_evidence(self):
+        with mock.patch.object(engine, "http_get_json_with_headers", return_value=(self.public, {"steamwebapi-cache": "no"})) as request:
+            fetched = engine.fetch_steamwebapi_raw_inventory("fixture", key="fixture", mode="2", parse="0", trade_locked="0")
+        self.assertEqual(request.call_args.args[1]["trade_locked"], "0")
+        self.assertIn("freshness=live", fetched.pages[0].source)
+
+    def test_unchanged_unverified_asset_does_not_repeat_a_change_event(self):
+        target, _, _ = self.target()
+        now = utcnow()
+        before = self.snapshot(target, ["1"], now - timedelta(days=3), status="partial", observation="unknown")
+        after = self.snapshot(target, ["1"], now, status="partial", observation="unknown")
+        diff = snapshot_diff(after, before)
+        self.assertEqual(diff["pending"], [])
+        self.assertEqual(diff["unconfirmed"], [])
 
     def test_cached_or_missing_header_does_not_become_ready(self):
         for headers, code in (({}, "freshness_unknown"), ({"steamwebapi-cache": "yes"}, "cached_items")):

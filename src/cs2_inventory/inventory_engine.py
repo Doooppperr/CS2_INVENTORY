@@ -581,7 +581,7 @@ def provider_page_freshness(headers, payload, *, state, mode, trade_locked, owne
     # 已验证的供应商响应头 steamwebapi-cache=no 才是响应证据。
     # 默认 legacy 保护路由隐含模式 4，可在 no_cache=1 时回退缓存，仍保持未知。
     if state == "active" and cache == "no" and (
-        (mode == "0" and trade_locked == "0") or trade_locked == "1" or owner_session
+        trade_locked in {"0", "1"} or (mode == "0" and trade_locked is None) or owner_session
     ):
         return "live"
     return "unknown"
@@ -817,7 +817,7 @@ def fetch_steamwebapi_raw_inventory(
     timeout: float = 60.0,
     trade_url: str | None = None,
     steam_login_secure: str | None = None,
-    trade_locked: str = "0",
+    trade_locked: str | None = None,
     rate_gap: float = 1.2,
     max_pages_per_sample: int = 10,
     label: str | None = None,
@@ -848,8 +848,8 @@ def fetch_steamwebapi_raw_inventory(
     }
     if steam_login_secure:
         params["steam_login_secure"] = steam_login_secure
-        params["trade_locked"] = trade_locked
-    elif trade_locked != "0":
+        params["trade_locked"] = trade_locked if trade_locked is not None else "0"
+    elif trade_locked is not None:
         params["trade_locked"] = trade_locked
     if trade_url:
         params["trade_url"] = trade_url
@@ -2884,6 +2884,26 @@ def run_lightweight_query(
             provider_requests=single_fetch.request_attempts,
         )
         errors.extend(single_fetch.errors)
+        # context 16 只覆盖仍在保护期的皮肤；7—10 天的公开可见性窗口
+        # 可能仍需交易路径的 context 2。仅存在实际数量缺口时补一次，避免全量加价。
+        protected, missing, _ = classify_hidden_assets(
+            classification_records, official_public_records, classification_records, now=now
+        )
+        primary_total = sum(r.amount for r in merge_asset_records([official_public_records, protected, missing]))
+        if official_total is not None and primary_total < int(official_total):
+            supplement = fetch_steamwebapi_raw_inventory(
+                steamid, key=key or "", mode="2", parse="0", language=language,
+                state="active", no_cache="1", trade_locked="0", samples=1,
+                timeout=timeout, label="steamwebapi:parse=0:mode=2:context=2",
+            )
+            extra_records = [r for page in supplement.pages
+                             for r in asset_records_from_raw_payload(page.payload, source=page.source)]
+            official_public_records = merge_asset_records([extra_records, official_public_records])
+            sources["steamwebapi:parse=0:mode=2:context=2"] = _sources_entry(
+                len(supplement.pages), supplement.upstream_item_counts,
+                error="；".join(supplement.errors), provider_requests=supplement.request_attempts,
+            )
+            errors.extend(supplement.errors)
     else:
         classification_records = asset_records_from_parsed_payload(
             list(batch_items or []), source="steamwebapi:batch", now=now
