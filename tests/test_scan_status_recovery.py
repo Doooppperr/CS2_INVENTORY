@@ -281,6 +281,17 @@ class ScanStatusRecoveryTests(unittest.TestCase):
         self.assertEqual((live, observed), ([], []))
         self.assertEqual(engine._read_observation_cache(cache)["fixture"], {})
 
+    def test_legacy_unknown_cache_is_not_reused_as_verified_history(self):
+        now = 1_800_000_000
+        cache = str(self.root / "unknown.json")
+        engine._write_observation_cache(cache, {"fixture": {"1": {
+            "name": "测试皮肤", "classid": "100", "instanceid": "0", "amount": 1,
+            "first_seen": now - 86400, "last_seen": now, "expires_at": now + 9 * 86400,
+            "sources": ["steamwebapi:parse=1:mode=1:sample=1:page=1"],
+        }}})
+        self.assertEqual(engine.apply_observation_cache("fixture", [], set(), cache_path=cache, now=now), ([], []))
+        self.assertEqual(engine._read_observation_cache(cache)["fixture"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

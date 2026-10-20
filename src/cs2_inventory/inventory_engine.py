@@ -1481,6 +1481,12 @@ def _apply_observation_cache_unlocked(
     for assetid in list(account):
         row = account.get(assetid)
         if isinstance(row, dict):
+            sources = row.get("sources") if isinstance(row.get("sources"), list) else []
+            if (not row.get("last_verified_at") and not any(_freshness(str(s)) == "live" for s in sources)
+                    and not any(str(s).startswith("historical_seed") for s in sources)):
+                # 旧混合路由写入的未知观察不是历史实时资产；保留快照，不继续混入当前库存。
+                account.pop(assetid, None)
+                continue
             # 旧版本也可能把未知响应写成“再次命中”；读取时修正其无限续期。
             anchor = _int(row.get("last_verified_at"), 0) or _int(row.get("first_seen"), now)
             row["expires_at"] = min(_int(row.get("expires_at"), 0), anchor + ttl_seconds)
