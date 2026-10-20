@@ -504,7 +504,7 @@ class ApiInventoryTests(unittest.TestCase):
 
     def test_compare_uses_last_complete_same_policy_on_exact_day(self):
         baseline = self.save()
-        baseline.scanned_at = utcnow() - timedelta(days=1, hours=1)
+        baseline.scanned_at = utcnow() - timedelta(days=1)
         partial = self.save(
             first=protected("103"),
             second=engine.SteamQueryError("HTTP 451: unavailable"),
@@ -546,6 +546,81 @@ class ApiInventoryTests(unittest.TestCase):
         result, _ = self.query(second=payload)
         self.assertTrue(result["quality"]["api_contexts"]["protected"]["complete"])
         self.assertFalse(result["quality"]["api_contexts"]["other"]["complete"])
+
+    def test_legacy_inventory_is_history_only_when_new_api_has_no_success(self):
+        old = store_snapshot(
+            self.target,
+            {
+                "_assets": [{"asset_key": "999", "name": "旧混合物品", "amount": 1}],
+                "total_items": 1,
+                "item_types": 1,
+                "elapsed_ms": 1,
+                "coverage": "complete",
+                "errors": [],
+            },
+        )
+        db.session.commit()
+        result, _ = self.query(
+            first=engine.SteamQueryError("HTTP 451: unavailable"),
+            second=engine.SteamQueryError("HTTP 451: unavailable"),
+        )
+        store_snapshot(self.target, unify_inventory(result))
+        db.session.commit()
+        client = self.client(self.user)
+        data = client.get(f"/api/monitors/{self.target.id}").json
+        self.assertIsNone(data["snapshot"])
+        self.assertIsNone(data["monitor"]["latest"])
+        self.assertEqual(data["history"][0]["id"], old.id)
+        self.assertIsNone(
+            client.get(f"/api/monitors/{self.target.id}/compare?days=1").json["current"]
+        )
+        self.assertEqual(
+            client.get(
+                f"/api/monitors/{self.target.id}/snapshots/{old.id}"
+            ).status_code,
+            200,
+        )
+
+    def test_partial_history_and_latest_summary_do_not_claim_full_inventory_total(self):
+        full = self.save()
+        partial = self.save(
+            first=protected("103"),
+            second=engine.SteamQueryError("HTTP 451: unavailable"),
+        )
+        client = self.client(self.user)
+        detail = client.get(f"/api/monitors/{self.target.id}").json
+        self.assertEqual(detail["monitor"]["latest"]["id"], full.id)
+        history = client.get(
+            f"/api/monitors/{self.target.id}/snapshots/{partial.id}"
+        ).json
+        self.assertIsNone(history["snapshot"]["total_items"])
+        self.assertEqual(history["snapshot"]["items"][0]["count"], 1)
+
+    def test_terminal_no_items_requires_matching_live_page_count(self):
+        for declared, expected in ((1, True), (5, False)):
+
+            def response(url, params, **kwargs):
+                kwargs["request_observer"]()
+                if params["trade_locked"] == "1":
+                    return [], LIVE
+                if "start_assetid" in params:
+                    raise engine.SteamQueryError('HTTP 411: {"error":"NO_ITEMS"}')
+                payload = ordinary(("101",))
+                payload["total_inventory_count"] = declared
+                return payload, {**LIVE, "last_assetid": "101"}
+
+            with (
+                mock.patch.object(
+                    engine, "http_get_json_with_headers", side_effect=response
+                ),
+                mock.patch.object(engine.time, "sleep"),
+            ):
+                result = run_api_inventory_query(self.target.steamid, key="fixture")
+            self.assertEqual(result["quality"]["comparable"], expected)
+            self.assertEqual(
+                result["quality"]["api_contexts"]["other"]["terminal_empty_verified"],
+                expected,
+            )
 
 
 if __name__ == "__main__":

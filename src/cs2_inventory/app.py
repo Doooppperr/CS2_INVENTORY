@@ -338,7 +338,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             return jsonify({"error": "监控不存在"}), 404
         target, subscription = access
         history = snapshot_query_for_user(user, target.id).order_by(Snapshot.scanned_at.desc()).all()
-        latest = complete_snapshot(history)
+        latest = complete_snapshot([row for row in history if is_api_snapshot(row)])
         return jsonify({
             "monitor": target_public(target, include_latest=False, user=user) if subscription is None else monitor_public(subscription, user, include_latest=False),
             "snapshot": snapshot_public(latest) if latest else None,
@@ -370,11 +370,12 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         days = request.args.get("days", type=int)
         if days not in {1, 3, 7}:
             return jsonify({"error": "对比天数只支持 1、3、7"}), 400
-        current = complete_snapshot(
+        current_rows = (
             snapshot_query_for_user(user, target.id)
             .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
             .all()
         )
+        current = complete_snapshot([row for row in current_rows if is_api_snapshot(row)])
         if not current:
             return jsonify({
                 "days": days,

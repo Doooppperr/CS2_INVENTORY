@@ -361,12 +361,12 @@ class EntitlementTests(unittest.TestCase):
             user.activation_expires_at = utcnow() - timedelta(days=1)
             old = store_snapshot(target, {
                 "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1,
-                "errors": [], "_assets": [{"asset_key": "old", "name": "到期快照", "amount": 1, "sources": []}],
+                "errors": [], "_quality": {"source_policy":"api_only_v1", "comparable": True}, "_assets": [{"asset_key": "old", "name": "到期快照", "amount": 1, "sources": []}],
             })
             old.scanned_at = user.activation_expires_at - timedelta(minutes=1)
             newer = store_snapshot(target, {
                 "total_items": 2, "item_types": 1, "coverage": "ok", "elapsed_ms": 1,
-                "errors": [], "_assets": [{"asset_key": "new", "name": "到期后快照", "amount": 2, "sources": []}],
+                "errors": [], "_quality": {"source_policy":"api_only_v1", "comparable": True}, "_assets": [{"asset_key": "new", "name": "到期后快照", "amount": 2, "sources": []}],
             })
             newer.scanned_at = user.activation_expires_at + timedelta(minutes=1)
             db.session.commit()

@@ -580,18 +580,18 @@ class PlatformTests(unittest.TestCase):
             target = SteamTarget.query.first()
             morning = store_snapshot(target, {
                 "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1,
-                "errors": [], "_assets": [{"asset_key": "old", "name": "Old", "amount": 1, "sources": []}],
+                "errors": [], "_quality": {"source_policy":"api_only_v1", "comparable": True}, "_assets": [{"asset_key": "old", "name": "Old", "amount": 1, "sources": []}],
             })
             morning.scanned_at = datetime(2026, 8, 29, 23, 31)
             evening = store_snapshot(target, {
                 "total_items": 1, "item_types": 1, "coverage": "ok", "elapsed_ms": 1,
-                "errors": [], "_assets": [{"asset_key": "old", "name": "Old", "amount": 1, "sources": []}],
+                "errors": [], "_quality": {"source_policy":"api_only_v1", "comparable": True}, "_assets": [{"asset_key": "old", "name": "Old", "amount": 1, "sources": []}],
             })
             evening.scanned_at = datetime(2026, 8, 30, 12, 1)
             db.session.commit()
             current = store_snapshot(target, {
                 "total_items": 2, "item_types": 2, "coverage": "ok", "elapsed_ms": 1,
-                "errors": [], "_assets": [
+                "errors": [], "_quality": {"source_policy":"api_only_v1", "comparable": True}, "_assets": [
                     {"asset_key": "old", "name": "Old", "amount": 1, "sources": []},
                     {"asset_key": "new", "name": "New", "amount": 1, "sources": []},
                 ],
@@ -806,6 +806,7 @@ class PlatformTests(unittest.TestCase):
                 "coverage": "ok",
                 "elapsed_ms": 1,
                 "errors": [],
+                "_quality": {"source_policy":"api_only_v1", "comparable": True},
                 "_assets": [{"asset_key": "admin-view", "name": "测试物品", "amount": 1, "sources": []}],
             })
             db.session.commit()

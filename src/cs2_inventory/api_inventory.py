@@ -110,24 +110,33 @@ def run_api_inventory_query(steamid, *, key, language="schinese", timeout=120, r
             samples=1, timeout=timeout, label=f"steamwebapi:api_only:{section}")
         errors = list(fetch.errors)
         records = []
+        declared = [count for count in fetch.total_inventory_counts if count is not None]
+        terminal_empty = bool(section == "other" and fetch.pages and len(errors) == 1
+                              and "HTTP 411:" in errors[0] and _explicit_empty(errors, "protected"))
         empty = _explicit_empty(errors, section) and not fetch.pages
         if empty:
             errors = []
-        elif not errors:
+        elif not errors or terminal_empty:
             try:
                 if not fetch.pages:
                     raise ValueError("接口未返回库存页面")
                 for page in fetch.pages:
                     records.extend(_page_records(page, section))
                 records = engine.merge_asset_records([records])
-                declared = [count for count in fetch.total_inventory_counts if count is not None]
                 if declared and sum(row.amount for row in records) < max(declared):
                     raise ValueError("本分区资产少于 API 页面声明数量")
+                if terminal_empty:
+                    if not declared or sum(row.amount for row in records) != max(declared):
+                        raise ValueError("末页空响应缺少本分区数量完成证据")
+                    errors = []
             except (ValueError, TypeError, KeyError) as exc:
                 errors.append(f"steamwebapi:api_only:{section}: {exc}")
         successful = not errors
         contexts[section] = {"complete": successful, "scanned_at": datetime.now(timezone.utc).isoformat(),
                              "provider_requests": fetch.request_attempts, "errors": errors,
+                             "pages": len(fetch.pages), "returned_assets": sum(row.amount for row in records),
+                             "declared_total": max(declared) if declared else None,
+                             "terminal_empty_verified": bool(terminal_empty and successful),
                              "empty": successful and not records,
                              "private": any(re.search(r'\"error\"\s*:\s*\"PRIVATE\"', error) or error.endswith(": PRIVATE") for error in errors)}
         if successful:

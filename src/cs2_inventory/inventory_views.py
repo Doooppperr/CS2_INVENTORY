@@ -89,6 +89,13 @@ def business_payload(value):
     if not isinstance(value, dict):
         return value
     value = dict(value)
+    if "inventory_sections" in value and "latest" in value:
+        value["latest"] = ({"id": value["last_complete_snapshot_id"], "total_items": value["total_items"],
+                            "scanned_at": value["last_complete_snapshot_at"]} if value.get("last_complete_snapshot_id") else None)
+    quality = value.get("quality") or {}
+    if quality.get("source_policy") == SOURCE_POLICY and not quality.get("comparable"):
+        value["total_items"] = None
+        value["item_types"] = None
     if "from_snapshot_id" in value and not value.get("comparable"):
         for field in ("added", "removed", "changed", "reappeared"):
             value[field] = []

@@ -310,7 +310,8 @@ class DashboardTests(unittest.TestCase):
         self.user.plan = "monthly"
         self.user.activation_expires_at = self.today - timedelta(hours=1)
         db.session.commit()
-        self.assertEqual(self.data()["items"], [])
+        with mock.patch("cs2_inventory.entitlements.utcnow", return_value=self.today + timedelta(hours=1)):
+            self.assertEqual(self.data()["items"], [])
         self.user.activation_expires_at = self.today - timedelta(days=40)
         db.session.commit()
         with self.assertRaises(PermissionError):
