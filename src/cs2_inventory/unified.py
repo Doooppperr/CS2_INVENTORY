@@ -112,7 +112,7 @@ def unify_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
 
 def public_payload(unified: Mapping[str, Any], *, scanned_at: str | None = None) -> dict[str, Any]:
     items = list(unified.get("items") or [])
-    if (unified.get("_quality") or {}).get("source_policy") == "api_only_v1":
+    if (unified.get("_quality") or {}).get("source_policy") in {"api_only_v1", "api_preferred_v2"}:
         counts = collections.Counter()
         for asset in unified.get("_assets") or []:
             counts[(asset["name"], bool(asset.get("is_trade_protected")))] += int(asset["amount"])
@@ -128,7 +128,7 @@ def public_payload(unified: Mapping[str, Any], *, scanned_at: str | None = None)
         "errors": list(unified.get("errors") or []),
         "quality": dict(unified.get("_quality") or {}),
     }
-    if data["quality"].get("source_policy") == "api_only_v1":
+    if data["quality"].get("source_policy") in {"api_only_v1", "api_preferred_v2"}:
         sections = {}
         for section in ("protected", "other"):
             context = data["quality"].get("api_contexts", {}).get(section, {})
@@ -138,9 +138,10 @@ def public_payload(unified: Mapping[str, Any], *, scanned_at: str | None = None)
                     counts[(asset["name"], bool(asset.get("is_trade_protected")))] += int(asset["amount"])
             sections[section] = {"items": [{"name": name, "count": count, "is_trade_protected": flag}
                 for (name, flag), count in sorted(counts.items())],
-                "total_items": sum(counts.values()) if context.get("complete") else None,
-                "updated_at": context.get("scanned_at") if context.get("complete") else None}
+                "total_items": sum(counts.values()) if context.get("displayable", context.get("complete")) else None,
+                "updated_at": context.get("scanned_at") if context.get("displayable", context.get("complete")) else None}
         data["inventory_sections"] = sections
+        data["sections_same_complete_round"] = bool(data["quality"].get("comparable"))
         if not data["quality"].get("comparable"):
             data["total_items"] = None
             data["item_types"] = None

@@ -183,7 +183,7 @@ class ScanBudgetTests(unittest.TestCase):
         self.assertIsNone(claim_next_work())
 
     def test_admin_template_exposes_estimate_period_and_schedule(self):
-        html = self.app.test_client().get("/app").get_data(as_text=True)
+        html = self.app.test_client().get("/app").get_data(as_text=True) + self.app.test_client().get("/static/inventory.js").get_data(as_text=True)
         self.assertIn("q.billing_period_start", html)
         self.assertIn("q.billing_period_source", html)
         self.assertIn("q.scheduled_scan_hours_beijing", html)

@@ -149,6 +149,11 @@ def _snapshot_payload(snapshot: Snapshot) -> bytes:
         "elapsed_ms": snapshot.elapsed_ms,
         "errors": json.loads(snapshot.errors_json or "[]"),
     })
+    if payload.get("quality", {}).get("source_policy") in {"api_only_v1", "api_preferred_v2"}:
+        from .services import snapshot_public
+        repaired = snapshot_public(snapshot)
+        repaired.pop("quality", None)
+        payload.update(repaired)
     return gzip.compress(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 

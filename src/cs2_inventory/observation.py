@@ -146,7 +146,7 @@ def evidence_observation(evidence):
 def scan_quality(result):
     errors = result.get("errors") or []
     quality = result.get("quality") or {}
-    if quality.get("source_policy") == "api_only_v1":
+    if quality.get("source_policy") in {"api_only_v1", "api_preferred_v2"}:
         if quality.get("comparable"):
             return "ready"
         status = (result.get("coverage") or {}).get("status")

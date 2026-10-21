@@ -82,6 +82,18 @@ def can_inventory_diagnostics(user: User | None) -> bool:
     return bool(user and user.is_active and user.role == "admin" and user.username == "cs2inventory_admin")
 
 
+def super_admin_required(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        user = current_user()
+        if not user:
+            return jsonify({"error": "请先登录"}), 401
+        if not can_inventory_diagnostics(user):
+            return jsonify({"error": "需要超级管理员权限"}), 403
+        return view(user, *args, **kwargs)
+    return wrapped
+
+
 def user_json(user: User) -> dict:
     from .entitlements import entitlement_public
 
@@ -90,6 +102,7 @@ def user_json(user: User) -> dict:
         "username": user.username,
         "role": user.role,
         "can_view_inventory_diagnostics": can_inventory_diagnostics(user),
+        "can_query_inventory": can_inventory_diagnostics(user),
         "is_active": user.is_active,
         "created_at": beijing_iso(user.created_at),
         "last_login_at": beijing_iso(user.last_login_at),

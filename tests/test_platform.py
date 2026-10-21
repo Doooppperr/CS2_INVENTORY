@@ -758,6 +758,7 @@ class PlatformTests(unittest.TestCase):
 
     def test_user_interface_has_only_unified_inventory(self):
         html = (Path(__file__).parents[1] / "src" / "cs2_inventory" / "templates" / "index.html").read_text(encoding="utf-8")
+        html += (Path(__file__).parents[1] / "src/cs2_inventory/static/inventory.js").read_text(encoding="utf-8")
         self.assertNotIn("公开可见", html)
         self.assertNotIn("库存总量", html)
         self.assertIn("itemSearch", html)
@@ -823,6 +824,7 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200, history.get_json())
 
         html = (Path(__file__).parents[1] / "src" / "cs2_inventory" / "templates" / "index.html").read_text(encoding="utf-8")
+        html += (Path(__file__).parents[1] / "src/cs2_inventory/static/inventory.js").read_text(encoding="utf-8")
         self.assertIn('class="outline-primary target-open"', html)
         self.assertIn("source=admin", html)
         self.assertEqual(self.client.get(f"/monitors/{target_id}").status_code, 200)

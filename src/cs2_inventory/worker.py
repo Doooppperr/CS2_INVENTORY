@@ -250,6 +250,27 @@ def process_job(job_id: int) -> None:
     _run_inventory_job(job_id)
 
 
+def instant_view(job, unified, alias):
+    """一小时有效期内保留即时查询的成功分区，不合并资产或改写旧采集时间。"""
+    data = public_payload(unified, scanned_at=beijing_iso(utcnow()))
+    data["query_alias"] = alias
+    previous = [job] + ScanJob.query.filter(
+        ScanJob.steamid == job.steamid, ScanJob.kind == "instant", ScanJob.id < job.id,
+        ScanJob.expires_at > utcnow(), ScanJob.result_json.is_not(None)
+    ).order_by(ScanJob.id.desc()).all()
+    for section in ("protected", "other"):
+        current = data.get("inventory_sections", {}).get(section, {})
+        if current.get("updated_at"):
+            continue
+        for row in previous:
+            old = json.loads(row.result_json or "{}").get("inventory_sections", {}).get(section, {})
+            if old.get("updated_at"):
+                data.setdefault("inventory_sections", {})[section] = old
+                data["sections_same_complete_round"] = False
+                break
+    return data
+
+
 def _run_inventory_job(job_id: int) -> None:
     job = db.session.get(ScanJob, job_id)
     if not job:
@@ -259,6 +280,7 @@ def _run_inventory_job(job_id: int) -> None:
         finish_batch(job.batch_id)
         return
     charged = 0
+    query_alias = json.loads(job.result_json or "{}").get("query_alias", "")
 
     def charge(result):
         nonlocal charged
@@ -277,7 +299,7 @@ def _run_inventory_job(job_id: int) -> None:
                 store_snapshot(target, unified)
                 target.scan_status = "scanning"
         else:
-            job.result_json = json.dumps(public_payload(unified, scanned_at=beijing_iso(utcnow())), ensure_ascii=False)
+            job.result_json = json.dumps(instant_view(job, unified, query_alias), ensure_ascii=False)
         db.session.commit()  # 保护物品即时可读，不等普通分区结束。
 
     try:
@@ -298,11 +320,11 @@ def _run_inventory_job(job_id: int) -> None:
                 target.profile_updated_at = utcnow()
             snapshot = store_snapshot(target, unified)
             record_daily_job(job, target, snapshot)
-            job.result_json = json.dumps({"target_id": target.id, "diagnostics": {
+            job.result_json = json.dumps({"target_id": target.id, "query_alias": query_alias, "diagnostics": {
                 **unified.get("_quality", {}), "elapsed_ms": unified["elapsed_ms"], "credits": charged,
                 "errors": unified["errors"]}}, ensure_ascii=False)
         else:
-            job.result_json = json.dumps(public_payload(unified, scanned_at=beijing_iso(utcnow())), ensure_ascii=False)
+            job.result_json = json.dumps(instant_view(job, unified, query_alias), ensure_ascii=False)
         job.status = "failed" if unified.get("_scan_status") in {"private", "failed"} else "completed"
         job.error = "; ".join(unified["errors"])[:2000] if job.status == "failed" else None
         job.finished_at = utcnow()

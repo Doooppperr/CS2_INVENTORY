@@ -4,7 +4,7 @@ import json
 from datetime import datetime, time, timedelta, timezone
 
 from flask import Flask, jsonify, render_template, request, session
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
@@ -17,6 +17,7 @@ from .auth import (
     login_required,
     rate_limited,
     require_csrf,
+    super_admin_required,
     user_json,
 )
 from .config import Config
@@ -53,7 +54,9 @@ from .models import (
     beijing_iso,
     utcnow,
 )
+from .observation import snapshot_quality
 from .password_vault import recover_user_password, set_user_password
+from .query_jobs import enqueue_queries, validate_entries
 from .services import (
     add_monitor,
     delete_monitor,
@@ -254,6 +257,10 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
                 "entitlement": entitlement_public(user),
             })
         query = Subscription.query.filter_by(user_id=user.id).join(SteamTarget).order_by(SteamTarget.created_at.desc())
+        search = request.args.get("q", "").strip()[:100]
+        if search:
+            query = query.filter(or_(SteamTarget.steamid.contains(search, autoescape=True),
+                SteamTarget.persona_name.contains(search, autoescape=True), Subscription.remark.contains(search, autoescape=True)))
         page, pagination = canonical_pagination(query, per_page=app.config["PAGE_SIZE"])
         latest_scan_at = (
             db.session.query(func.max(SteamTarget.last_success_at))
@@ -357,7 +364,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         candidates = snapshot_query_for_user(user, target.id).filter(
             Snapshot.scanned_at < snapshot.scanned_at
         ).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
-        previous = complete_snapshot([row for row in candidates if is_api_snapshot(row) == is_api_snapshot(snapshot)])
+        previous = complete_snapshot([row for row in candidates if snapshot_quality(row).get("source_policy") == snapshot_quality(snapshot).get("source_policy")])
         return jsonify({"snapshot": snapshot_public(snapshot), "diff": snapshot_diff(snapshot, previous)})
 
     @app.get("/api/monitors/<int:target_id>/compare")
@@ -400,7 +407,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             .order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc())
             .all()
         )
-        baseline = complete_snapshot([row for row in baseline_rows if is_api_snapshot(row) == is_api_snapshot(current)])
+        baseline = complete_snapshot([row for row in baseline_rows if snapshot_quality(row).get("source_policy") == snapshot_quality(current).get("source_policy")])
         return jsonify({
             "days": days,
             "requested_baseline_date": target_date.isoformat(),
@@ -452,6 +459,10 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         job = db.session.get(ScanJob, job_id)
         if not job or (user.role != "admin" and job.requested_by != user.id):
             return jsonify({"error": "任务不存在"}), 404
+        if job.kind in {"manual", "instant"} and not can_inventory_diagnostics(user):
+            return jsonify({"error": "任务不存在"}), 404
+        if job.expires_at and job.expires_at.replace(tzinfo=timezone.utc) <= utcnow():
+            return jsonify({"error": "查询结果已过期"}), 410
         result = json.loads(job.result_json) if job.result_json else None
         return jsonify({"id": job.id, "status": job.status, "kind": job.kind, "result": result, "error": job.error})
 
@@ -621,7 +632,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         return jsonify({"ok": True, "target_deleted": True})
 
     @app.post("/api/admin/targets/<int:target_id>/scan")
-    @admin_required
+    @super_admin_required
     def admin_scan(user, target_id):
         require_csrf()
         target = db.session.get(SteamTarget, target_id)
@@ -632,16 +643,32 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         return jsonify({"job_id": job.id}), 202
 
     @app.post("/api/admin/query")
-    @admin_required
+    @app.post("/api/admin/queries")
+    @super_admin_required
     def admin_query(user):
         require_csrf()
-        steamid = str((request.get_json(silent=True) or {}).get("steamid") or "").strip()
-        if not steamid.startswith("7656119") or len(steamid) != 17 or not steamid.isdigit():
-            return jsonify({"error": "请输入有效的 SteamID64"}), 400
-        job = ScanJob(steamid=steamid, requested_by=user.id, kind="instant", expires_at=utcnow() + timedelta(hours=1))
-        db.session.add(job)
+        try:
+            entries = validate_entries(request.get_json(silent=True))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        items = enqueue_queries(user, entries)
         db.session.commit()
-        return jsonify({"job_id": job.id}), 202
+        credits = app.config["INVENTORY_CREDITS_PER_REQUEST"]
+        return jsonify({"job_id": items[0]["job_id"], "items": items,
+                        "estimated_requests": 2 * sum(not item["reused"] for item in items),
+                        "credits_per_request": credits}), 202
+
+    @app.get("/api/admin/queries")
+    @super_admin_required
+    def query_history(user):
+        page, pagination = canonical_pagination(ScanJob.query.filter(
+            ScanJob.requested_by == user.id, ScanJob.kind.in_(["manual", "instant"])
+        ).order_by(ScanJob.id.desc()), per_page=20)
+        return jsonify({"page": page, "pages": pagination.pages, "total": pagination.total,
+            "items": [{"id": row.id, "steamid": row.steamid, "status": row.status,
+                       "created_at": beijing_iso(row.created_at), "target_id": row.target_id,
+                       "alias": (json.loads(row.result_json or "{}")).get("query_alias", "")}
+                      for row in pagination.items]})
 
     @app.get("/api/admin/status")
     @admin_required
@@ -686,9 +713,9 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.after_request
     def inventory_presentation(response):
         user = current_user()
-        if response.is_json and user and not can_inventory_diagnostics(user) and response.status_code < 400:
+        if response.is_json and user and not can_inventory_diagnostics(user):
             data = response.get_json()
-            if request.endpoint == "job_status":
+            if request.endpoint == "job_status" and response.status_code < 400:
                 data.pop("error", None)
             if isinstance(data, dict) and "quality_summary" in data:
                 data["summary"] = {key: value for key, value in data.get("summary", {}).items() if key in {"targets", "observed"}}

@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 
 from .database import db
@@ -131,6 +131,14 @@ def snapshot_public(snapshot: Snapshot, *, include_items: bool = True) -> dict:
             }
             for name, is_trade_protected in ordered_groups
         ]
+    if quality.get("source_policy") in {"api_only_v1", "api_preferred_v2"}:
+        from .inventory_views import inventory_view
+        view = inventory_view(snapshot.target_id, None, rows=[snapshot], include_items=include_items)
+        data["inventory_sections"] = view["inventory_sections"]
+        data["sections_same_complete_round"] = view["sections_same_complete_round"]
+        if not quality.get("comparable"):
+            data["total_items"] = None
+            data["item_types"] = None
     return data
 
 
@@ -196,6 +204,8 @@ def monitor_public(subscription: Subscription, user: User, *, include_latest: bo
 
 
 def queue_job(target: SteamTarget, *, kind: str, requested_by: int | None = None, batch_id: int | None = None) -> ScanJob:
+    # SQLite 写锁覆盖检查与插入，跨进程防止并发重复入队。
+    db.session.execute(update(SteamTarget).where(SteamTarget.id == target.id).values(persona_name=SteamTarget.persona_name))
     existing = ScanJob.query.filter(
         ScanJob.target_id == target.id,
         ScanJob.status.in_(["queued", "running"]),
@@ -351,9 +361,9 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot | None:
             first_seen_at=previous_seen.get(asset["asset_key"], scanned_at),
             is_trade_protected=bool(asset.get("is_trade_protected", False)),
         ))
-    if (unified.get("_quality") or {}).get("source_policy") != "api_only_v1":
+    if (unified.get("_quality") or {}).get("source_policy") not in {"api_only_v1", "api_preferred_v2"}:
         queue_localization_job(snapshot, target, unresolved_count, language=language)
-    if status == "ready" or (unified.get("_quality") or {}).get("source_policy") != "api_only_v1":
+    if status == "ready" or (unified.get("_quality") or {}).get("source_policy") not in {"api_only_v1", "api_preferred_v2"}:
         target.last_success_at = snapshot.scanned_at
     target.last_scan_at = snapshot.scanned_at
     return snapshot
@@ -361,7 +371,7 @@ def store_snapshot(target: SteamTarget, unified: dict) -> Snapshot | None:
 
 def snapshot_diff(current: Snapshot, previous: Snapshot | None) -> dict:
     policies = {snapshot_quality(row).get("source_policy", "legacy") for row in (current, previous) if row}
-    if "api_only_v1" in policies and (len(policies) > 1 or not snapshot_quality(current).get("comparable")
+    if policies & {"api_only_v1", "api_preferred_v2"} and (len(policies) > 1 or not snapshot_quality(current).get("comparable")
                                       or (previous and not snapshot_quality(previous).get("comparable"))):
         return {"from_snapshot_id": previous.id if previous else None, "to_snapshot_id": current.id,
                 "added": [], "removed": [], "changed": [], "reappeared": [], "pending": [], "unconfirmed": [],
@@ -501,13 +511,20 @@ def prune_expired() -> dict:
     expired_jobs = ScanJob.query.filter(ScanJob.expires_at.is_not(None), ScanJob.expires_at < now).all()
 
     keep_ids: set[int] = set(protected)
-    from .inventory_views import is_api_snapshot, section_snapshot_ids
-    recent_rows = Snapshot.query.filter(Snapshot.scanned_at >= cutoff).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
+    from .inventory_views import (
+        complete_snapshot,
+        is_api_snapshot,
+        section_snapshot_ids,
+    )
+    recent_rows = Snapshot.query.order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
     by_target = {}
     for row in recent_rows:
         by_target.setdefault(row.target_id, []).append(row)
     for rows in by_target.values():
         keep_ids.update(section_snapshot_ids(rows))
+        full = complete_snapshot([row for row in rows if is_api_snapshot(row)])
+        if full:
+            keep_ids.add(full.id)
     stale_snapshots: list[Snapshot] = []
     old_snapshot_ids: list[int] = [
         row[0]
@@ -531,7 +548,7 @@ def prune_expired() -> dict:
             local_day = _aware_utc(row.scanned_at).astimezone(BEIJING_TIMEZONE).date().isoformat()
             last_of_day[local_day] = row
             if is_api_snapshot(row) and snapshot_quality(row).get("comparable") and row.coverage == "complete":
-                last_complete_of_day[local_day] = row
+                last_complete_of_day[(local_day, snapshot_quality(row).get("source_policy"))] = row
         keep_ids.update(row.id for row in last_of_day.values())
         keep_ids.update(row.id for row in last_complete_of_day.values())
         # 48 小时至 8 天：仅保留每个（目标, 北京自然日）的最后一张。

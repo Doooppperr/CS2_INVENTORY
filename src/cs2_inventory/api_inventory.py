@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 from typing import Mapping
 
 from . import inventory_engine as engine
+from .steam_visible import fetch_visible_inventory
 
-SOURCE_POLICY = "api_only_v1"
+SOURCE_POLICY = "api_preferred_v2"
+API_POLICIES = {"api_only_v1", SOURCE_POLICY}
 SECTIONS = ("protected", "other")
 
 
@@ -90,11 +92,11 @@ def run_api_inventory_query(steamid, *, key, language="schinese", timeout=120, r
         for section, rows in results.items():
             for row in rows:
                 membership[row.assetid].add(section)
-        complete = all(contexts.get(section, {}).get("complete") for section in SECTIONS)
+        complete = all(contexts.get(section, {}).get("complete") and contexts[section].get("origin") == "steamwebapi" for section in SECTIONS)
         errors = [error for context in contexts.values() for error in context.get("errors", [])]
         private = bool(len(contexts) == 2 and all(context.get("private") for context in contexts.values()))
         status = "complete" if complete else "partial" if results else "private" if private else "failed"
-        quality = {"source_policy": SOURCE_POLICY, "scan_round": str(round_id or ""), "api_contexts": dict(contexts),
+        quality = {"source_policy": SOURCE_POLICY, "scan_round": str(round_id or ""), "api_contexts": {key: dict(value) for key, value in contexts.items()},
                    "comparable": complete, "reason_codes": [] if complete else ["api_refresh_incomplete"],
                    "live_count": sum(row.amount for row in all_rows), "cached_count": 0, "unknown_count": 0,
                    "final": final}
@@ -138,9 +140,25 @@ def run_api_inventory_query(steamid, *, key, language="schinese", timeout=120, r
                              "declared_total": max(declared) if declared else None,
                              "terminal_empty_verified": bool(terminal_empty and successful),
                              "empty": successful and not records,
+                             "origin": "steamwebapi", "coverage_scope": section,
+                             "page_complete": successful, "inventory_complete": successful,
+                             "displayable": successful, "scan_round": str(round_id or ""),
                              "private": any(re.search(r'\"error\"\s*:\s*\"PRIVATE\"', error) or error.endswith(": PRIVATE") for error in errors)}
         if successful:
             results[section] = records
         if section == "protected" and successful and on_progress:
             on_progress(build())
+    if not contexts["other"]["complete"]:
+        if on_progress:
+            on_progress(build())  # 公开兜底前先提交已发生的付费请求账目。
+        rows, fallback = fetch_visible_inventory(steamid, language=language, timeout=min(timeout, 20))
+        fallback["terminal_empty_verified"] = False
+        fallback["scan_round"] = str(round_id or "")
+        fallback["api_failure"] = dict(contexts["other"])
+        # API 请求与错误仍保留在分区账本中；公开请求不计 API credits。
+        fallback["provider_requests"] = contexts["other"]["provider_requests"]
+        fallback["errors"] = contexts["other"]["errors"] + fallback["errors"]
+        contexts["other"] = fallback
+        if fallback["displayable"]:
+            results["other"] = rows
     return build(final=True)

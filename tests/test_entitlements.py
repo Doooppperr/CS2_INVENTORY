@@ -118,7 +118,7 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn("--orange:#e9853d", landing)
         self.assertIn("background-image:var(--scanlines)", landing)
 
-        console = self.client.get("/app").get_data(as_text=True)
+        console = self.client.get("/app").get_data(as_text=True) + self.client.get("/static/inventory.js").get_data(as_text=True)
         self.assertIn('id="homeLink"', console)
         self.assertIn("$('homeLink').onclick=()=>location.href=appUrl('')", console)
         self.assertEqual(console.count('data-section="'), 3)
@@ -137,7 +137,7 @@ class EntitlementTests(unittest.TestCase):
 
     def test_three_state_theme_is_shared_early_and_system_aware(self):
         landing = self.client.get("/").get_data(as_text=True)
-        console = self.client.get("/app").get_data(as_text=True)
+        console = self.client.get("/app").get_data(as_text=True) + self.client.get("/static/inventory.js").get_data(as_text=True)
         theme_response = self.client.get("/static/theme.js")
 
         self.assertEqual(theme_response.status_code, 200)
@@ -220,7 +220,7 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn("const [primary,...duplicates]=document.querySelectorAll('[data-auth]')", landing)
         self.assertIn("duplicates.forEach(b=>b.hidden=true)", landing)
 
-        console = self.client.get("/app").get_data(as_text=True)
+        console = self.client.get("/app").get_data(as_text=True) + self.client.get("/static/inventory.js").get_data(as_text=True)
         self.assertIn("value.startsWith('?')?`app${value}`:`app/${value}`", console)
         self.assertEqual(self.client.get("/app/").status_code, 200)
         self.assertEqual(self.client.get("/app/monitors/999/").status_code, 200)

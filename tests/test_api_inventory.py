@@ -73,6 +73,13 @@ def ordinary(ids=("102",)):
 
 class ApiInventoryTests(unittest.TestCase):
     def setUp(self):
+        # 旧 API-only 用例只测付费分区；公开兜底由独立测试覆盖，禁止真实网络。
+        fallback = mock.patch("cs2_inventory.api_inventory.fetch_visible_inventory", return_value=([], {
+            "origin": "steam_public", "displayable": False, "complete": False,
+            "page_complete": False, "inventory_complete": False, "scanned_at": None,
+            "errors": ["fixture public unavailable"], "private": False}))
+        fallback.start()
+        self.addCleanup(fallback.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.app = create_app(
             {
