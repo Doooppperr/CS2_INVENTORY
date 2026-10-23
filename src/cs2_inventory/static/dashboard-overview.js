@@ -48,7 +48,8 @@
     const up=direction==='increase',sign=up?'+':'−',tone=up?'up':'down';
     if(!items.length)return `<div class="ranking-empty">${available?`暂无${up?'加仓':'减仓'}记录`:'暂无可对比记录'}</div>`;
     const base=$('dashboard').dataset.app.replace(/\/$/,'');
-    const account=row=>`<div class="rank-account"><a href="${esc(`${base}/monitors/${encodeURIComponent(row.target_id)}`)}" title="${esc(row.label)}">${esc(row.label)}</a><span class="rank-${tone}">${delta(row.count,sign)}</span><span class="rank-holding" title="${esc(fmt(row.holding_at))}">持有 ${num(row.holding)}</span></div>`;
+    const back=typeof location==='undefined'?base+'/dashboard':location.pathname+location.search;
+    const account=row=>`<div class="rank-account"><a href="${esc(`${base}/monitors/${encodeURIComponent(row.target_id)}?source=dashboard&return_to=${encodeURIComponent(back)}`)}" title="${esc(row.label)}">${esc(row.label)}</a><span class="rank-${tone}">${delta(row.count,sign)}</span><span class="rank-holding" title="${esc(fmt(row.holding_at))}">持有 ${num(row.holding)}</span></div>`;
     return `<ol class="ranking-list">${items.map((item,i)=>`<li class="rank-item" style="--share:${Math.round(item.count/items[0].count*100)}%"><span class="rank-index rank-index-${i+1}">${i+1}</span><div class="rank-content"><div class="rank-title"><h3>${esc(item.name)}</h3><b class="rank-${tone}">${delta(item.count,sign)}</b></div><div class="rank-track"><span class="rank-fill-${tone}"></span></div><div class="rank-accounts">${item.accounts.slice(0,3).map(account).join('')}${item.accounts.length>3?`<details><summary>另 ${item.accounts.length-3} 个账号</summary>${item.accounts.slice(3).map(account).join('')}</details>`:''}</div></div></li>`).join('')}</ol>`;
   }
   function render(data){

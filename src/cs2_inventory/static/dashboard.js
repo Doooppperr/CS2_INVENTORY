@@ -40,7 +40,7 @@
       if(serial!==generation)return;
       if(page>data.pages){page=data.pages;await load();return;}
       history.replaceState(null,'',`?${values}`);
-      const fingerprint=JSON.stringify(overview);
+      const fingerprint=JSON.stringify(overview)+location.search;
       if(!sameOverview||overviewCache?.fingerprint!==fingerprint)window.InventoryOverview.render(overview);
       overviewCache={key:overviewKey,fingerprint};
       const s=data.summary;
@@ -83,6 +83,7 @@
     try{
       const auth=await get(root.dataset.bootstrap);
       if(!auth.user){location.replace(`${root.dataset.home}?auth=login&next=${encodeURIComponent(location.pathname+location.search)}`);return;}
+      window.WorkspaceNavigation.init({user:auth.user,csrf:auth.csrf_token,active:'dashboard'});
       diagnostics=!!auth.user.can_view_inventory_diagnostics;document.querySelector('.quality-panel').classList.toggle('hidden',!diagnostics);document.querySelector('[data-section="pending"]').classList.toggle('hidden',!diagnostics);document.querySelector('#section option[value="pending"]').disabled=!diagnostics;document.querySelector('#section option[value="pending"]').hidden=!diagnostics;if(!diagnostics)document.querySelector('#section option[value="pending"]').remove();
       $('viewer').textContent=auth.user.username;
       $('scopeLabel').classList.toggle('hidden',!diagnostics);

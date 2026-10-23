@@ -120,7 +120,7 @@ class EntitlementTests(unittest.TestCase):
 
         console = self.client.get("/app").get_data(as_text=True) + self.client.get("/static/inventory.js").get_data(as_text=True)
         self.assertIn('id="homeLink"', console)
-        self.assertIn("$('homeLink').onclick=()=>location.href=appUrl('')", console)
+        self.assertIn('<a id="homeLink" href="/">平台介绍</a>', console)
         self.assertEqual(console.count('data-section="'), 3)
         self.assertNotIn('id="adminCodesTab"', console)
         self.assertIn("['overview','users','targets']", console)

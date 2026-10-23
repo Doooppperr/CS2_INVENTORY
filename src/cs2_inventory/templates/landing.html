@@ -34,12 +34,13 @@
   </div>
   {% include "_site_footer.html" %}
   <dialog id="authDialog"><form id="authForm" class="dialog"><button type="button" class="close" id="closeAuth">×</button><h2 id="authTitle">登录</h2><label>用户名</label><input id="username" autocomplete="username" required><label>密码</label><input id="password" type="password" minlength="1" maxlength="72" autocomplete="current-password" required><p id="authMessage" class="message"></p><button id="authSubmit" class="full">登录</button></form></dialog>
-  <script>
+  <script src="{{ url_for('static', filename='navigation.js') }}"></script>
+<script>
     const dialog=document.getElementById('authDialog'),message=document.getElementById('authMessage');let root=location.pathname;if(!root.endsWith('/'))root+='/';
     const url=p=>root+String(p).replace(/^\//,'');
-    async function bootstrap(){const r=await fetch(url('api/bootstrap'));const d=await r.json();window.csrf=d.csrf_token;if(d.user){const [primary,...duplicates]=document.querySelectorAll('[data-auth]');primary.textContent='进入控制台';primary.onclick=()=>location.href=url('app');duplicates.forEach(b=>b.hidden=true)}}
+    async function bootstrap(){const r=await fetch(url('api/bootstrap'));const d=await r.json();window.csrf=d.csrf_token;if(d.user){const [primary,...duplicates]=document.querySelectorAll('[data-auth]');primary.textContent='进入看板';primary.onclick=()=>location.href=url('app/dashboard');duplicates.forEach(b=>b.hidden=true)}}
     document.querySelectorAll('[data-auth]').forEach(b=>b.onclick=()=>{message.textContent='';dialog.showModal()});document.getElementById('closeAuth').onclick=()=>dialog.close();
-    document.getElementById('authForm').onsubmit=async e=>{e.preventDefault();message.textContent='';message.style.color='';const r=await fetch(url('api/auth/login'),{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':window.csrf},body:JSON.stringify({username:document.getElementById('username').value.trim(),password:document.getElementById('password').value})});const d=await r.json();if(!r.ok){message.textContent=d.error||'请求失败';return}const next=new URLSearchParams(location.search).get('next');location.href=next&&next.startsWith('/')?next:url('app')};
+    document.getElementById('authForm').onsubmit=async e=>{e.preventDefault();message.textContent='';message.style.color='';const r=await fetch(url('api/auth/login'),{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':window.csrf},body:JSON.stringify({username:document.getElementById('username').value.trim(),password:document.getElementById('password').value})});const d=await r.json();if(!r.ok){message.textContent=d.error||'请求失败';return}const next=new URLSearchParams(location.search).get('next');location.href=window.WorkspaceNavigation.destination(next,root)};
     document.getElementById('copyEmail').onclick=async()=>{await navigator.clipboard.writeText('star0718@outlook.com');document.getElementById('copyEmail').textContent='已复制'};bootstrap().then(()=>{const requested=new URLSearchParams(location.search).get('auth');if(requested&&!window.csrf)return;if(requested)dialog.showModal()});
   </script>
 </body>

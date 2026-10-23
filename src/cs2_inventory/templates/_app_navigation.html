@@ -1,0 +1,16 @@
+<header class="workspace-header" id="workspaceNavigation" data-home="{{ url_for('index') }}">
+  <a class="workspace-brand" href="{{ url_for('dashboard_page') }}" aria-label="返回每日看板"><span class="app-brand-mark">{{ pixel_emblem() }}</span><span>CS2 Inventory</span></a>
+  <nav class="workspace-nav" aria-label="主导航">
+    <a data-workspace="dashboard" href="{{ url_for('dashboard_page') }}">每日看板</a>
+    <a data-workspace="monitors" href="{{ url_for('application', view='monitors') }}">我的监控</a>
+    <a data-workspace="admin" class="hidden" href="{{ url_for('application', view='admin') }}">管理后台</a>
+  </nav>
+  <details class="account-menu" id="accountMenu"><summary><span id="navUsername">账号</span><span aria-hidden="true">⌄</span></summary><div class="account-menu-body">
+    <label class="theme-picker"><span>主题</span><select data-theme-selector aria-label="选择主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+    <button type="button" id="navPassword">修改密码</button>
+    <a id="homeLink" href="{{ url_for('index') }}">平台介绍</a>
+    <button type="button" id="navLogout">退出登录</button>
+    <p id="navError" role="alert"></p>
+  </div></details>
+</header>
+<dialog id="selfPasswordDialog"><form id="selfPasswordForm" class="dialog-body"><h3>修改密码</h3><label for="selfOldPassword">当前密码</label><input id="selfOldPassword" type="password" autocomplete="current-password" required><label for="selfNewPassword">新密码</label><input id="selfNewPassword" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><label for="selfConfirmPassword">确认新密码</label><input id="selfConfirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><p id="selfPasswordMessage" role="status"></p><div class="dialog-actions"><button type="button" id="selfPasswordCancel" class="ghost">取消</button><button type="submit" id="selfPasswordSave">保存</button></div></form></dialog>

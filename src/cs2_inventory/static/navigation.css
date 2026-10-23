@@ -1,0 +1,24 @@
+/* 一级导航保持跨页一致，页面内只呈现当前模块的二级入口。 */
+.workspace-header{display:flex;align-items:center;gap:32px;padding:0 0 20px;margin-bottom:26px;border-bottom:1px solid var(--row-border);font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;letter-spacing:normal;position:relative;z-index:5}
+.workspace-brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--text);font-size:20px;font-weight:750;white-space:nowrap}
+.workspace-brand .app-brand-mark{width:38px;height:38px;box-shadow:none;border-width:1px;border-radius:8px}.workspace-brand .pixel-emblem{width:29px;height:29px}
+.workspace-nav{display:flex;align-items:center;gap:5px;flex:1}
+.workspace-nav a{padding:9px 14px;color:var(--muted);font-size:14px;font-weight:600;text-decoration:none;white-space:nowrap;border-radius:8px;border:1px solid transparent}
+.workspace-nav a:hover{background:var(--panel2);color:var(--text)}.workspace-nav a.active{color:var(--text);background:var(--active);border-color:var(--line)}
+.account-menu{margin-left:auto;position:relative;font-size:12px}
+.account-menu>summary{list-style:none;display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 10px!important;border:1px solid var(--row-border);border-radius:8px;max-width:240px;font-weight:500!important}
+.account-menu>summary::-webkit-details-marker{display:none}#navUsername{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-menu-body{position:absolute;right:0;top:calc(100% + 8px);width:220px;padding:10px;background:var(--panel);border:1px solid var(--row-border);border-radius:12px;box-shadow:0 12px 32px #0003;display:grid;gap:4px}
+.account-menu-body button,.account-menu-body>a{display:block;text-align:left;color:var(--text);background:none;border:0;box-shadow:none;border-radius:6px;padding:9px 10px;font-size:13px;font-weight:400;text-decoration:none;width:100%;font-family:inherit}
+.account-menu-body button:hover,.account-menu-body>a:hover{background:var(--panel2);transform:none;box-shadow:none}.account-menu-body .theme-picker{display:flex;justify-content:space-between;padding:7px 10px;margin:0}.account-menu-body .theme-picker span{position:static;width:auto;height:auto;clip:auto;overflow:visible;font-size:12px}.account-menu-body .theme-picker select{min-width:110px;padding:6px;box-shadow:none;border-width:1px;border-radius:6px;font-size:12px}
+#navLogout{border-top:1px solid var(--row-border);border-radius:0}#navError:empty{display:none}#navError{color:var(--red);padding:0 10px;overflow-wrap:anywhere}
+.workspace-header a:focus-visible,.workspace-header summary:focus-visible,.module-nav a:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.module-nav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;align-items:center;font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif}
+.module-nav a{color:var(--muted);text-decoration:none;padding:7px 12px;border:1px solid transparent;border-radius:7px;font-size:13px;font-weight:500}
+.module-nav a:hover{color:var(--text);background:var(--panel2)}.module-nav a.active{color:var(--text);border-color:var(--row-border);background:var(--panel2)}
+.module-nav .nav-divider{width:1px;height:18px;background:var(--row-border);margin:0 4px}
+.page-heading{font-size:20px!important;letter-spacing:normal;margin:0 0 18px!important;font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif}
+.dashboard-shell .dashboard-intro{display:none}
+#selfPasswordDialog{border:1px solid var(--line);border-radius:12px;font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif}#selfPasswordDialog input{border-width:1px;border-radius:6px}#selfPasswordMessage{font-size:13px}
+@media(max-width:900px){.workspace-header{flex-wrap:wrap;gap:14px 18px}.workspace-nav{order:3;flex-basis:100%}.workspace-brand{font-size:18px}.account-menu>summary{max-width:210px}.workspace-header{margin-bottom:20px}}
+@media(max-width:480px){.workspace-brand{font-size:16px;gap:8px}.workspace-brand .app-brand-mark{width:32px;height:32px}.workspace-brand .pixel-emblem{width:25px;height:25px}.account-menu>summary{max-width:160px;font-size:11px}.workspace-nav a{flex:1;text-align:center;font-size:13px;padding:8px}.workspace-header{gap:12px 8px;padding-bottom:14px}.module-nav{gap:4px}.module-nav a{padding:7px 9px;font-size:12px}.page-heading{font-size:18px!important}}
