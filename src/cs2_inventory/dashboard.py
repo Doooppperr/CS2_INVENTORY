@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import date, timedelta, timezone
 
 from .auth import can_inventory_diagnostics
+from .dashboard_access import dashboard_scope
 from .database import db
 from .entitlements import entitlement_state
 from .models import (
@@ -160,11 +161,7 @@ def dashboard_data(user, args):
     state = entitlement_state(user)
     if state == "expired":
         raise PermissionError("账号已过期")
-    scope = args.get("scope", "mine")
-    if scope not in {"mine", "all"}:
-        raise ValueError("未知监控范围")
-    if scope == "all" and user.role != "admin":
-        raise PermissionError("仅管理员可查看全部目标")
+    scope = dashboard_scope(user, args)
     subscriptions = {s.target_id: s for s in Subscription.query.filter_by(user_id=user.id)}
     targets = SteamTarget.query.all() if scope == "all" else [s.target for s in subscriptions.values()]
     ids = [t.id for t in targets]

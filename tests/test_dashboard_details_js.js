@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+const context={window:{}};vm.createContext(context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/cs2_inventory/static/dashboard-details.js'),'utf8'),context);
+const render=context.window.InventoryDetails.render;
+const item={name:'<img src=x onerror=alert(1)>',account_count:2,increase:20,decrease:10,net:10,max_increase:15,
+  accounts:[{target_id:42,label:'<script>x</script>',before:10,after:25,first_seen:15,reappeared:0,verified:true}]};
+let html=render([item],'signals','/app');
+assert.ok(html.includes('width:100%')&&html.includes('width:50%'),'增减共用刻度');
+assert.ok(html.includes('+20')&&html.includes('−10')&&html.includes('+10'));
+assert.ok(html.includes('1 个账号')&&html.includes('单账号最大增加 +15'));
+assert.ok(html.includes('/app/monitors/42')&&html.includes('10 → 25'));
+assert.ok(!html.includes('<img')&&!html.includes('<script>')&&html.includes('&lt;img'));
+assert.ok(!html.includes('<details class="change-item" open'),'默认折叠');
+html=render([{...item,increase:0,decrease:0,net:0}],'signals','/app/');
+assert.ok(html.includes('+0')&&html.includes('−0')&&!html.includes('NaN'));
+html=render([item],'pending','/app');
+assert.ok(html.includes('待核实')&&!html.includes('change-track')&&!html.includes('+20'));
+html=render([item],'reappeared','/app');assert.ok(html.includes('1 个账号'));
+assert.equal(render([],'signals','/app'),'');
+const template=fs.readFileSync(path.join(__dirname,'../src/cs2_inventory/templates/dashboard.html'),'utf8');
+assert.ok(template.includes('class="compact-filters"')&&template.includes('class="advanced-filters"'));
+assert.ok(!template.includes('筛选库存信号')&&!template.includes('加仓快捷筛选'));
+assert.ok(template.includes('id="direction"')&&template.includes('dashboard-details.js'));
+console.log('DETAILS_RENDER scale/zero/pending/escaping/accounts/compact=PASS');

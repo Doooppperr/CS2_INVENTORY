@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from sqlalchemy import tuple_
 from sqlalchemy.orm import load_only
 
+from .dashboard_access import dashboard_scope
 from .entitlements import entitlement_state
 from .models import (
     BEIJING_TIMEZONE,
@@ -33,11 +34,7 @@ def overview_data(user, args):
         raise ValueError("日期或周期格式无效") from None
     if days not in {3, 7} or not today - timedelta(days=7) <= end <= today:
         raise ValueError("支持近 3 日或近 7 日，结束日期须在保留范围内")
-    scope = args.get("scope", "mine")
-    if scope not in {"mine", "all"}:
-        raise ValueError("未知监控范围")
-    if scope == "all" and user.role != "admin":
-        raise PermissionError("仅管理员可查看全部目标")
+    scope = dashboard_scope(user, args)
     state = entitlement_state(user)
     if state == "expired":
         raise PermissionError("账号已过期")

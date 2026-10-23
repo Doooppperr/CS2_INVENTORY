@@ -28,7 +28,7 @@
     }
     for(const [key,color] of [['increase','up'],['decrease','down']]){
       let segment=[];
-      const flush=()=>{if(segment.length>1)svg+=`<polyline class="chart-line chart-${color}" points="${segment.join(' ')}"/>`;segment=[];};
+      const flush=()=>{if(segment.length>1)svg+=`<polygon class="chart-area-${color}" points="${segment[0].split(',')[0]},${floor} ${segment.join(' ')} ${segment[segment.length-1].split(',')[0]},${floor}"/><polyline class="chart-line chart-${color}" points="${segment.join(' ')}"/>`;segment=[];};
       points.forEach((point,i)=>{if(Number.isFinite(point[key]))segment.push(`${x(i)},${y(point[key])}`);else flush();});flush();
       points.forEach((point,i)=>{if(Number.isFinite(point[key]))svg+=`<circle class="chart-dot chart-${color}" cx="${x(i)}" cy="${y(point[key])}" r="4"/>`;});
     }
