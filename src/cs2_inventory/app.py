@@ -337,6 +337,21 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         response.headers["Vary"] = "Cookie"
         return response
 
+    @app.get("/api/dashboard/overview")
+    @login_required
+    def dashboard_overview(user):
+        from .dashboard_overview import overview_data
+        try:
+            data = overview_data(user, request.args)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+        response = jsonify(data)
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Vary"] = "Cookie"
+        return response
+
     @app.get("/api/monitors/<int:target_id>")
     @login_required
     def monitor_detail(user, target_id):

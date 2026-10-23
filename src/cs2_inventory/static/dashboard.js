@@ -10,7 +10,7 @@
   const stateNames={ready:'校验通过',partial:'待核验',private:'已私密',failed:'扫描失败',pending:'待扫描 / 扫描中',missing:'没有早间记录'};
   const clear = () => {
     for(const id of ['rows','stats','qualityReasons','accountStatuses'])$(id).replaceChildren();
-    $('quality').textContent='';$('note').textContent='';$('page').textContent='—';
+    window.InventoryOverview.clear();$('quality').textContent='';$('note').textContent='';$('page').textContent='—';
     for(const id of ['countSignals','countReappeared','countPending'])$(id).textContent='—';
   };
   async function get(url) {
@@ -34,10 +34,11 @@
     $('error').textContent='';$('apply').disabled=true;$('prev').disabled=true;$('next').disabled=true;
     clear();$('title').textContent='正在读取日报…';$('reportStatus').textContent='正在读取';root.setAttribute('aria-busy','true');
     try{
-      const values=parameters(),data=await get(`${root.dataset.api}?${values}`);
+      const values=parameters(),[data,overview]=await Promise.all([get(`${root.dataset.api}?${values}`),get(`${root.dataset.overview}?${values}`)]);
       if(serial!==generation)return;
       if(page>data.pages){page=data.pages;await load();return;}
       history.replaceState(null,'',`?${values}`);
+      window.InventoryOverview.render(overview);
       const s=data.summary;
       $('stats').innerHTML=[['已产出记录',`${s.observed} / ${s.targets}`],['有效对比账号',s.comparable],['已私密',s.private],['异常 / 不完整',`${s.failed} / ${s.partial}`],['待扫描 / 缺失',`${s.pending} / ${s.missing}`]].map(([label,value])=>`<div class="stat"><span>${label}</span><b>${esc(value)}</b></div>`).join('');
       if(!diagnostics)$('stats').innerHTML=[['监控账号',s.targets],['已有记录',s.observed]].map(([label,value])=>`<div class="stat"><span>${label}</span><b>${value??'—'}</b></div>`).join('');
@@ -61,8 +62,9 @@
   $('section').onchange=()=>switchSection($('section').value);
   $('date').onchange=()=>{if($('date').checkValidity()){page=1;load();}};
   $('scope').onchange=()=>{page=1;load();};
+  $('overviewDays').onchange=()=>{page=1;load();};
   document.querySelectorAll('[data-section]').forEach(button=>button.onclick=()=>switchSection(button.dataset.section));
-  $('resetFilters').onclick=()=>{const date=$('date').value,scope=$('scope').value;$('filters').reset();$('date').value=date;$('scope').value=scope;syncSection();page=1;load();};
+  $('resetFilters').onclick=()=>{const date=$('date').value,scope=$('scope').value,days=$('overviewDays').value;$('filters').reset();$('date').value=date;$('scope').value=scope;$('overviewDays').value=days;syncSection();page=1;load();};
   addEventListener('pagehide',()=>{generation++;clear();$('viewer').textContent='';});
   addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
   async function boot(){
@@ -70,7 +72,7 @@
       const auth=await get(root.dataset.bootstrap);
       if(!auth.user){location.replace(`${root.dataset.home}?auth=login&next=${encodeURIComponent(location.pathname+location.search)}`);return;}
       diagnostics=!!auth.user.can_view_inventory_diagnostics;document.querySelector('.quality-panel').classList.toggle('hidden',!diagnostics);document.querySelector('[data-section="pending"]').classList.toggle('hidden',!diagnostics);document.querySelector('#section option[value="pending"]').disabled=!diagnostics;document.querySelector('#section option[value="pending"]').hidden=!diagnostics;if(!diagnostics)document.querySelector('#section option[value="pending"]').remove();
-      $('viewer').textContent=`${auth.user.username} · 仅展示当前账号有权查看的监控`;
+      $('viewer').textContent=auth.user.username;
       $('scopeLabel').classList.toggle('hidden',auth.user.role!=='admin');
       const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}),min=new Date(`${today}T00:00:00+08:00`);min.setUTCDate(min.getUTCDate()-7);
       $('date').value=today;$('date').max=today;$('date').min=min.toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'});

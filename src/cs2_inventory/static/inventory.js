@@ -92,7 +92,7 @@ async function loadMonitors(){
  $('monitorList').innerHTML=d.items.length?d.items.map(x=>{
   const sections=x.inventory_sections||{},protectedSection=sections.protected||{},other=sections.other||{};
   return `<article class="inventory-card"><div class="card-title"><div><h3>${esc(x.remark||x.persona_name||x.steamid)}</h3><span class="meta">${esc(x.steamid)}</span></div><span class="card-arrow">↗</span></div>
-   <div class="protection-count"><span>交易保护中</span><strong>${protectedSection.total_items??'—'} <small>件</small></strong><span class="meta">${fmt(protectedSection.updated_at)}</span></div>
+   <div class="protection-count"><span class="protection-label">交易保护中</span><strong>${protectedSection.total_items??'—'} <small>件</small></strong><div class="protection-growth">${[['7','七日内新增'],['1','1日内新增']].map(([days,label])=>{const value=x.protected_additions?.[days];return `<div><span>${label}</span><b>${Number.isInteger(value)&&value>=0?`+${value}`:'—'}</b></div>`}).join('')}</div><span class="meta">${fmt(protectedSection.updated_at)}</span></div>
    <div class="card-metrics"><div><span>其他可见物品</span><b>${other.total_items??'—'}</b><small>${fmt(other.updated_at)}</small></div><div><span>最近完整库存</span><b>${x.total_items??'—'} <small>件 / ${x.item_types??'—'} 种</small></b><small>${fmt(x.last_complete_snapshot_at)}</small></div></div>
    <div class="card-actions"><button class="card-open" data-id="${x.id}">查看库存</button>${state.currentView==='subscriptions'?`<button class="ghost remark-edit" data-id="${x.id}">备注</button>`:''}${state.user.can_query_inventory?`<button class="ghost card-scan" data-id="${x.id}">立即扫描</button>`:''}</div></article>`;
  }).join(''):'<div class="empty">暂无匹配的订阅目标</div>';

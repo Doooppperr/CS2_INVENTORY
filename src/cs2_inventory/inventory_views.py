@@ -3,12 +3,47 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import date, timedelta
 
 from .api_inventory import API_POLICIES, SECTIONS
 from .auth import can_inventory_diagnostics
 from .entitlements import snapshot_query_for_user
 from .models import ScanJob, Snapshot, beijing_iso
 from .observation import row_evidence, snapshot_quality
+
+
+def protected_additions(rows, current):
+    """按北京时间目标日末次完整保护分区，统计仍在保护中的资产正向增量。
+
+    普通分区失败不影响统计；缺失基线不回退、不把首次观测当作新增。
+    """
+    result = {"7": None, "1": None}
+    if current is None:
+        return result
+    quality = snapshot_quality(current)
+    if not quality.get("api_contexts", {}).get("protected", {}).get("complete"):
+        return result
+    policy = quality.get("source_policy")
+    current_date = date.fromisoformat(beijing_iso(current.scanned_at)[:10])
+
+    def amounts(row):
+        counts = Counter()
+        for item in row.items:
+            if item.is_trade_protected and "protected" in row_evidence(item).get("api_contexts", []):
+                counts[item.asset_key] += item.amount
+        return counts
+
+    latest = amounts(current)
+    for days in (7, 1):
+        target_date = (current_date - timedelta(days=days)).isoformat()
+        baseline = next((row for row in rows
+                         if beijing_iso(row.scanned_at)[:10] == target_date
+                         and snapshot_quality(row).get("source_policy") == policy
+                         and snapshot_quality(row).get("api_contexts", {}).get("protected", {}).get("complete")), None)
+        if baseline is not None:
+            previous = amounts(baseline)
+            result[str(days)] = sum(max(count - previous[key], 0) for key, count in latest.items())
+    return result
 
 
 def displayable(context):
@@ -69,6 +104,7 @@ def inventory_view(target_id, user, *, rows=None, include_items=True):
             "items": [{"name": name, "count": count, "is_trade_protected": protected}
                       for (name, protected), count in sorted(counts.items())] if include_items else []}
     result = {"inventory_sections": sections,
+              "protected_additions": protected_additions(api_rows, selected.get("protected")),
               "last_complete_snapshot_at": beijing_iso(full.scanned_at) if full else None,
               "last_complete_snapshot_id": full.id if full else None,
               "total_items": full.total_items if full else None,
