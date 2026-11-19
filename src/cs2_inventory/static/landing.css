@@ -1,0 +1,103 @@
+/* 介绍页使用与工作台相同的主题变量。薄荷色用于操作，琥珀色只表示交易保护。 */
+* { box-sizing:border-box }
+html { scroll-behavior:smooth; scroll-padding-top:1rem; background:var(--bg) }
+body { margin:0; background:var(--bg); color:var(--text); font:400 16px/1.6 "Segoe UI","Microsoft YaHei",sans-serif }
+button, input, select { font:inherit }
+a { color:inherit }
+.wrap { width:min(1180px,calc(100% - 64px)); margin-inline:auto }
+.nav { display:flex; align-items:center; justify-content:space-between; gap:20px; padding-block:20px; border-bottom:1px solid var(--row-border) }
+.brand, .nav-actions, .theme-picker, .hero-actions, .contact-actions, .preview-heading { display:flex; align-items:center }
+.brand { gap:10px; font-size:20px; font-weight:700; letter-spacing:-.035em; white-space:nowrap }
+.brand-mark { display:grid; place-items:center; width:36px; height:36px; border-radius:9px; background:var(--blue) }
+.brand-mark svg { width:26px; height:26px }
+.px-ink { fill:var(--button-text) } .px-paper { fill:var(--panel) } .px-accent { fill:var(--blue) }
+.px-dark, .px-grid, .px-shadow { fill:var(--line) } .px-accent-2 { fill:var(--protected-text) } .px-visor,.px-highlight { fill:var(--protected-badge) }
+.nav-actions { gap:18px }
+.nav-link, .text-link { display:inline-flex; align-items:center; justify-content:center; min-height:44px; font-size:14px; font-weight:650; text-decoration:none; text-underline-offset:4px }
+.nav-link { color:var(--muted) }
+.nav-link:hover, .text-link:hover { color:var(--blue); text-decoration:underline }
+button, .button { display:inline-flex; align-items:center; justify-content:center; min-height:44px; padding:9px 19px; border:1px solid transparent; border-radius:8px; cursor:pointer; background:var(--blue); color:var(--button-text); font:650 15px/1.4 "Segoe UI","Microsoft YaHei",sans-serif; text-align:center; text-decoration:none }
+button:hover, .button:hover { background:color-mix(in srgb,var(--blue) 89%,var(--text)); }
+button:disabled { opacity:.65; cursor:wait }
+button.secondary, .button.ghost, button.close { background:var(--panel); border-color:var(--row-border); color:var(--text) }
+button.secondary:hover, .button.ghost:hover, button.close:hover { background:var(--hover); border-color:var(--line) }
+:where(a,button,input,select):focus-visible { outline:3px solid var(--focus); outline-offset:3px }
+.theme-picker { gap:6px; color:var(--muted); font-size:13px }
+.theme-picker select { min-height:44px; max-width:100%; padding:7px 8px; border:1px solid var(--row-border); border-radius:8px; background:var(--panel); color:var(--text); cursor:pointer }
+.hero { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,.88fr); gap:clamp(38px,8vw,110px); align-items:center; padding-block:clamp(44px,6.4vw,84px) }
+.eyebrow { color:var(--blue); font-size:13px; font-weight:700; letter-spacing:.035em }
+.hero-copy .eyebrow { display:flex; align-items:center; gap:9px }
+.hero-copy .eyebrow::before { content:""; width:19px; height:3px; border-radius:2px; background:var(--blue) }
+h1, h2, h3, p { margin:0 } h1, h2, h3 { text-wrap:balance }
+.hero h1 { margin:16px 0 20px; font-size:clamp(42px,4.65vw,66px); line-height:1.1; letter-spacing:-.055em }
+.hero-copy p, .lead, .card p, .card li, .contact p { color:var(--muted); line-height:1.7 }
+.hero-copy p { font-size:clamp(16px,1.35vw,19px) }
+.semantic-lines span { display:block; text-wrap:balance }
+.hero-actions { gap:18px; flex-wrap:wrap; margin-top:24px }
+.text-link { gap:7px; color:var(--blue) }
+.inventory-preview { min-width:0; max-width:505px; width:100%; justify-self:end; padding:clamp(18px,2.3vw,30px); border:1px solid var(--row-border); border-radius:16px; background:var(--panel) }
+.preview-heading { justify-content:space-between; gap:12px }
+.sample-label { padding:2px 8px; border-radius:5px; background:var(--panel2); color:var(--muted); font-size:12px }
+.inventory-preview h2 { margin:10px 0 17px; font-size:clamp(21px,2.1vw,29px); line-height:1.25 }
+.preview-total { display:flex; justify-content:space-between; gap:8px; align-items:flex-end; padding:13px 16px; border-left:3px solid var(--protected-border); border-radius:6px; background:var(--protected-start); color:var(--protected-text); font-variant-numeric:tabular-nums }
+.preview-total span { font-size:13px } .preview-total strong { display:block; margin-top:3px; font-size:30px; line-height:1.2 }
+.preview-total small, .preview-items small { font-size:13px; font-weight:600 }
+.preview-items { margin:11px 0 0; padding:0; list-style:none; font-size:14px }
+.preview-items li { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--row-border) }
+.preview-items li:last-child { padding-bottom:0; border:0 }
+.preview-items strong { color:var(--protected-text); white-space:nowrap; font-variant-numeric:tabular-nums }
+.section { padding:clamp(32px,4vw,54px) 0; border-top:1px solid var(--row-border) }
+.section-head { margin-bottom:20px }
+.section h2 { margin:0 0 7px; font-size:clamp(25px,2.5vw,34px); line-height:1.25; letter-spacing:-.035em }
+.section .lead { font-size:15px }
+.grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px }
+.notice-grid { grid-template-columns:repeat(2,minmax(0,1fr)) }
+.card { min-width:0; padding:clamp(17px,2vw,24px); border-radius:12px; border:1px solid var(--row-border); background:var(--panel) }
+.feature-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:16px }
+.number { display:inline-flex; align-items:center; justify-content:center; min-width:32px; height:28px; padding:0 7px; border-radius:6px; background:var(--active); color:var(--blue); font-size:13px; font-weight:700; font-variant-numeric:tabular-nums }
+.pixel-feature { width:32px; height:32px }
+.card h3 { margin:0 0 7px; font-size:19px; line-height:1.4 }
+.card p, .card li { font-size:15px }
+.notice-card .number { margin-bottom:12px }
+.plan h3 { font-weight:600 }
+.plan .price { display:flex; align-items:baseline; gap:4px; font-size:34px; line-height:1.4; font-variant-numeric:tabular-nums; letter-spacing:-.045em }
+.price-currency { font-size:21px } .price-unit { margin-left:3px; font-size:14px; font-weight:600; color:var(--muted); letter-spacing:0 }
+.plan ul { margin:16px 0 0; padding:14px 0 0 1.15em; border-top:1px solid var(--row-border) }
+.contact { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px 24px; padding:clamp(19px,3vw,38px); background:var(--summary); border:1px solid var(--row-border); border-radius:14px }
+.contact-actions { justify-content:flex-end; gap:8px; flex-wrap:wrap }
+.contact-copy-status:not(:empty) { grid-column:1/-1; font-size:14px } .contact-copy-status:empty { display:none }
+dialog { width:min(420px,calc(100% - 32px)); max-height:calc(100% - 32px); overflow:auto; padding:0; border:1px solid var(--line); border-radius:14px; color:var(--text); background:var(--panel) }
+dialog::backdrop { background:rgb(7 14 18 / .65) }
+.dialog { padding:24px } .dialog h2 { margin:5px 0 21px; font-size:23px }
+.dialog .close { float:right; width:44px; height:44px; padding:0; font-size:24px; line-height:1 }
+.dialog label { display:block; margin:12px 0 5px; font-size:14px; font-weight:650 }
+.dialog input { display:block; width:100%; min-height:44px; border:1px solid var(--line); border-radius:7px; padding:9px 11px; background:var(--input); color:var(--text) }
+.full { width:100%; margin-top:18px } .message:not(:empty) { margin-top:10px; font-size:14px; color:var(--text) }
+@media (max-width:800px) {
+  .wrap { width:calc(100% - 40px) }
+  .hero { gap:24px }
+  .nav-actions { gap:12px }
+  .contact { grid-template-columns:1fr }
+  .contact-actions { justify-content:flex-start }
+}
+@media (max-width:660px) {
+  .wrap { width:calc(100% - 32px) }
+  .nav { display:grid; grid-template-columns:auto 1fr auto; gap:4px 12px; padding-block:12px }
+  .nav-actions { display:contents }
+  .brand { grid-area:1/1/2/3; font-size:18px }
+  .brand-mark { width:32px; height:32px }
+  .nav-actions > button, .nav-actions > .button { grid-area:1/3; padding-inline:12px }
+  .nav-actions .nav-link { justify-self:start; min-width:44px }
+  .nav-link[href="#features"] { grid-area:2/1 }
+  .nav-link[href="#plans"] { grid-area:2/2 }
+  .nav-actions .theme-picker { grid-area:2/3; justify-self:end }
+  .theme-picker span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
+  .hero { grid-template-columns:minmax(0,1fr); gap:26px; padding-block:30px }
+  .hero h1 { margin:10px 0 12px; font-size:clamp(38px,8.5vw,48px) }
+  .hero-actions { margin-top:16px }
+  .inventory-preview { justify-self:start; max-width:none }
+  .grid, .notice-grid { grid-template-columns:1fr }
+  .feature-head { margin-bottom:10px }
+  .contact-actions { align-items:stretch }
+}
+@media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto } }

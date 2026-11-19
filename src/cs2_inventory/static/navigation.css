@@ -1,5 +1,7 @@
 /* 一级导航保持跨页一致，页面内只呈现当前模块的二级入口。 */
-.workspace-header{display:flex;align-items:center;gap:32px;padding:0 0 20px;margin-bottom:26px;border-bottom:1px solid var(--row-border);font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;letter-spacing:normal;position:relative;z-index:5}
+/* 分区导航 < 全局账号菜单；原生对话框由浏览器顶层呈现。 */
+:root{--layer-section-nav:5;--layer-workspace-nav:10}
+.workspace-header{display:flex;align-items:center;gap:32px;padding:0 0 20px;margin-bottom:26px;border-bottom:1px solid var(--row-border);font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;letter-spacing:normal;position:relative;z-index:var(--layer-workspace-nav)}
 .workspace-brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--text);font-size:20px;font-weight:750;white-space:nowrap}
 .workspace-brand .app-brand-mark{width:38px;height:38px;box-shadow:none;border-width:1px;border-radius:8px}.workspace-brand .pixel-emblem{width:29px;height:29px}
 .workspace-nav{display:flex;align-items:center;gap:5px;flex:1}
@@ -27,7 +29,7 @@
 #switchAccountForm input{width:100%;border:1px solid var(--row-border);border-radius:6px;min-height:42px;box-shadow:none}#switchAccountForm button{min-height:40px;border-radius:8px;box-shadow:none}
 #switchAccountForm input:focus-visible{outline:2px solid var(--focus);outline-offset:1px}#switchAccountMessage{color:var(--red);font-size:13px}#switchAccountMessage:empty{display:none}
 
-.account-menu-body{width:min(264px,calc(100vw - 28px));max-height:min(68vh,520px);overflow-y:auto}
+.account-menu-body{width:min(264px,calc(100vw - 28px));max-height:min(68vh,520px);overflow-y:auto;overscroll-behavior-y:contain}
 .saved-account-section{border-bottom:1px solid var(--row-border);padding-bottom:5px}
 .saved-account-section[hidden]{display:none}
 .saved-account-section h2{margin:2px 10px 6px;font:600 12px/1.4 "Segoe UI","Microsoft YaHei",sans-serif;color:var(--muted)}

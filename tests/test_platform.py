@@ -771,15 +771,15 @@ class PlatformTests(unittest.TestCase):
         self.assertIn("method:'DELETE'", html)
         self.assertNotIn("user-toggle", html)
 
-    def test_pixel_art_elements_render_on_landing_and_app(self):
+    def test_landing_has_labeled_inventory_example_and_shared_brand(self):
         landing = self.client.get("/")
         self.assertEqual(landing.status_code, 200)
         landing_html = landing.get_data(as_text=True)
-        self.assertIn("pixel-operator", landing_html)
-        self.assertIn("pixel-loadout", landing_html)
-        self.assertEqual(landing_html.count('class="pixel-svg pixel-feature"'), 3)
-        self.assertIn('shape-rendering="crispEdges"', landing_html)
-        self.assertIn("OPERATOR // 01", landing_html)
+        self.assertIn("pixel-emblem", landing_html)
+        self.assertIn('id="previewTitle">交易保护新增', landing_html)
+        self.assertIn("数据示例", landing_html)
+        self.assertIn('class="preview-items"', landing_html)
+        self.assertNotIn("查看快照", landing_html)
 
         app = self.client.get("/app")
         self.assertEqual(app.status_code, 200)

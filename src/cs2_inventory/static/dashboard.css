@@ -182,7 +182,7 @@ body{background-image:none}body::before,body::after{display:none}
 @media(max-width:420px) {.signal-tools {grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}}
 
 .report-scope{display:grid;gap:3px}.report-scope .meta{font-size:12px}
-.dashboard-jumps{position:sticky;top:0;z-index:5;display:flex;gap:4px;align-items:center;padding:3px 4px;margin:0 0 10px;border:1px solid var(--row-border);border-radius:10px;background:var(--panel)}
+.dashboard-jumps{position:sticky;top:0;z-index:var(--layer-section-nav);display:flex;gap:4px;align-items:center;padding:3px 4px;margin:0 0 10px;border:1px solid var(--row-border);border-radius:10px;background:var(--panel)}
 .dashboard-jumps a{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 12px;border-radius:7px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}
 .dashboard-jumps a:hover,.dashboard-jumps a:focus-visible{background:var(--panel2);color:var(--blue)}.dashboard-jumps a:focus-visible,.chart-day:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
 #trendHeading,#signalHeading,#increaseHeading,#decreaseHeading,#dailyDetails>summary{scroll-margin-block-start:54px}

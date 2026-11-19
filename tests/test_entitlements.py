@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from bs4 import BeautifulSoup
 from werkzeug.security import generate_password_hash
 
 from cs2_inventory.app import create_app
@@ -109,14 +110,16 @@ class EntitlementTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.get_json())
 
-    def test_warm_landing_and_three_part_admin_console_navigation(self):
+    def test_landing_shares_workspace_theme_and_admin_console_has_three_sections(self):
         landing = self.client.get("/").get_data(as_text=True)
         self.assertIn("登录进入平台", landing)
         self.assertNotIn("免费体验", landing)
         self.assertIn("一键完成库存追踪", landing)
         self.assertNotIn("一处完成库存追踪", landing)
-        self.assertIn("--orange:#e9853d", landing)
-        self.assertIn("background-image:var(--scanlines)", landing)
+        self.assertIn('href="/static/workspace.css"', landing)
+        self.assertIn('href="/static/landing.css"', landing)
+        self.assertIn('aria-labelledby="previewTitle"', landing)
+        self.assertIn("数据示例", landing)
 
         console = self.client.get("/app").get_data(as_text=True) + self.client.get("/static/inventory.js").get_data(as_text=True)
         self.assertIn('id="homeLink"', console)
@@ -152,12 +155,10 @@ class EntitlementTests(unittest.TestCase):
             self.assertIn('<option value="dark">深色</option>', html)
             self.assertIn("dataset.themePreference", html)
             self.assertIn("prefers-color-scheme: dark", html)
-            self.assertIn(':root[data-theme="dark"]', html)
-            self.assertIn("#0b0814", html)
-            self.assertIn("#9b5cff", html)
-            self.assertIn("#2dd4bf", html)
-            self.assertLess(html.index("cs2-inventory-theme"), html.index("<style>"))
-            self.assertLess(html.index("<style>"), html.index("<body"))
+            # Restore the previous theme before the first stylesheet can paint.
+            self.assertLess(html.index("cs2-inventory-theme"), html.index('rel="stylesheet"'))
+            self.assertLess(html.index('rel="stylesheet"'), html.index("<body"))
+            self.assertIn('href="/static/workspace.css"', html)
 
         self.assertEqual(landing.count("data-theme-selector"), 1)
         self.assertEqual(console.count("data-theme-selector"), 2)
@@ -181,7 +182,7 @@ class EntitlementTests(unittest.TestCase):
             '<span>按扫描轮次追踪仍在交易保护中的新增饰品。</span>',
             landing,
         )
-        self.assertIn('<p class="lead semantic-lines">', landing)
+        self.assertIn('<p class="semantic-lines">', landing)
         self.assertNotIn("trialNote", landing)
         self.assertIn("管理员确认后提供登录账户", landing)
         for old_copy in (
@@ -212,8 +213,8 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn("首次扫描会建立库存记录", landing)
         self.assertIn("打开每日看板，选择日期和扫描轮次", landing)
         self.assertIn("展开新增饰品，即可查看加仓账号和件数", landing)
-        self.assertIn(".notice-grid{grid-template-columns:repeat(2,minmax(0,1fr))", landing)
-        self.assertIn(".grid,.notice-grid{grid-template-columns:1fr}", landing)
+        steps = BeautifulSoup(landing, "html.parser").select("#usage article h3")
+        self.assertEqual([h.get_text(strip=True) for h in steps], ["添加第一个监控", "查看本轮加仓"])
 
     def test_landing_has_a_dashboard_link_in_header_and_hero_for_returning_users(self):
         anonymous = self.client.get("/")
