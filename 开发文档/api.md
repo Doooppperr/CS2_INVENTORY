@@ -60,6 +60,6 @@
 ## 本浏览器的账号切换
 
 - `GET /api/auth/accounts`：返回当前登录账号 ID 及本浏览器仍有效的账号（仅 ID、用户名）。
-- `POST /api/auth/switch`：传入 `user_id` 切换到已验证且未过期的账号。首次添加账号仍走 `POST /api/auth/login`。
+- `POST /api/auth/switch`：传入 `user_id` 切换到本浏览器已验证且未被撤销的账号。没有固定的登录有效期。首次添加账号仍走 `POST /api/auth/login`。
 - `POST /api/auth/accounts/forget`：传入其他账号的 `user_id`，移除其在本浏览器的快捷登录资格，不影响账号和订阅。
-- `POST /api/auth/logout`：退出并清除本次浏览器会话里的全部账号。上述写请求沿用 CSRF 校验。
+- `POST /api/auth/logout`：退出并清除此浏览器记住的全部账号。上述写请求沿用 CSRF 校验。

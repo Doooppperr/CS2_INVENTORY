@@ -24,6 +24,7 @@ class Config:
         for host in os.getenv("CS2_TRUSTED_HOSTS", "localhost,127.0.0.1").split(",")
         if host.strip()
     ]
+    # 仅供旧版/匿名 Flask 会话；已验证的设备授权不按时间过期。
     PERMANENT_SESSION_LIFETIME = 86400
     MAX_TARGETS = int(os.getenv("CS2_MAX_TARGETS", "100"))
     PAGE_SIZE = 20

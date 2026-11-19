@@ -36,8 +36,13 @@ def run(channel):
         home = f'http://127.0.0.1:{server.server_port}'
         try:
             with sync_playwright() as driver:
-                browser = driver.chromium.launch(channel=channel)
-                context = browser.new_context(viewport={'width': 390, 'height': 844})
+                def open_browser():
+                    return driver.chromium.launch_persistent_context(
+                        str(root / 'browser-profile'), channel=channel,
+                        viewport={'width': 390, 'height': 844},
+                    )
+
+                context = open_browser()
                 first, second = context.new_page(), context.new_page()
                 first.goto(home + '/?auth=login')
                 first.locator('#username').fill('alpha')
@@ -70,6 +75,13 @@ def run(channel):
                     tab.locator('[data-workspace="monitors"]').click()
                     expect(tab.locator('#monitorList')).to_contain_text('beta的目标')
                     expect(tab.locator('#monitorList')).not_to_contain_text('alpha的目标')
+                # 真正关闭浏览器，再用同一用户目录启动。不导出、注入或重建 Cookie。
+                context.close()
+                context = open_browser()
+                first, second = context.new_page(), context.new_page()
+                for tab in (first, second):
+                    tab.goto(home + '/app/dashboard')
+                    expect(tab.locator('#navUsername')).to_have_text('beta')
                 # 两个账号均验证过后，来回切换只点账号名，不再提交密码。
                 logins=[]
                 switches=[]
@@ -93,7 +105,7 @@ def run(channel):
                 first.locator('#navLogout').click()
                 for tab in (first, second):
                     expect(tab).to_have_url(home + '/?auth=login')
-                browser.close()
+                context.close()
         finally:
             server.shutdown()
             thread.join()
@@ -101,7 +113,7 @@ def run(channel):
             with app.app_context():
                 db.session.remove()
                 db.engine.dispose()
-    print('ACCOUNT SWITCH: wrong password / cancel / mobile login / two tabs / scoped inventory / three one-click switches with 0 password submissions / forget / logout = PASS')
+    print('ACCOUNT SWITCH: wrong password / cancel / mobile login / persistent browser restart / two tabs / scoped inventory / three one-click switches with 0 password submissions / forget / logout = PASS')
 
 
 if __name__ == '__main__':

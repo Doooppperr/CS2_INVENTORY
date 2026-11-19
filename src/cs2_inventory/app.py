@@ -127,6 +127,7 @@ def canonical_pagination(query, *, per_page: int):
 
 def create_app(config: type[Config] | dict | None = None) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    app.session_interface = account_sessions.RememberedSessionInterface()
     app.config.from_object(Config)
     if config:
         app.config.from_mapping(config) if isinstance(config, dict) else app.config.from_object(config)
