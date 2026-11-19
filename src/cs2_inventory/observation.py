@@ -102,6 +102,15 @@ def reliable_id(value):
     return bool(value) and not str(value).startswith("synthetic:")
 
 
+def new_protected_units(asset_key, amount, first_seen_at, previous_amount, baseline_at):
+    """当前受保护资产的新增件数；保留原 ID 的换区和曾持有的回流均不算首次到货。"""
+    if not reliable_id(asset_key):
+        return 0
+    if previous_amount is None and first_seen_at.replace(tzinfo=None) <= baseline_at.replace(tzinfo=None):
+        return 0
+    return max(0, amount - (previous_amount or 0))
+
+
 def private_errors(errors):
     # 仅识别供应商错误位置的精确错误码，不匹配物品名称/普通 403。
     for error in errors:

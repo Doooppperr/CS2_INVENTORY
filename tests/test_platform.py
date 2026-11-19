@@ -670,50 +670,40 @@ class PlatformTests(unittest.TestCase):
 
     def test_daily_batch_sets_maintenance_and_queues_all_targets(self):
         with self.app.app_context():
-            # 北京时间 2026-09-06 08:00 深度窗口；20:00 轻量窗口。
-            morning_time = datetime(2026, 9, 6, 0, 0, tzinfo=timezone.utc)
-            evening_time = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
+            # 早间单独建日报基线；午间和晚间分别入队。
+            morning_time = datetime(2026, 9, 5, 23, tzinfo=timezone.utc)
             morning = enqueue_daily(now=morning_time)
             duplicate = enqueue_daily(now=morning_time + timedelta(minutes=5))
-            evening = enqueue_daily(now=evening_time)
-            self.assertEqual(scheduled_slot_key(morning_time), "2026-09-06-R2")
-            self.assertEqual(scheduled_slot_key(evening_time), "2026-09-06-R5")
+            midday = enqueue_daily(now=morning_time + timedelta(hours=7))
+            evening = enqueue_daily(now=morning_time + timedelta(hours=14))
             self.assertEqual(morning["jobs"], 3)
             self.assertEqual(duplicate["batch_id"], morning["batch_id"])
             self.assertTrue(duplicate["existing"])
-            self.assertNotEqual(evening["batch_id"], morning["batch_id"])
-            self.assertEqual(ScanBatch.query.count(), 2)
-            self.assertEqual(ScanJob.query.filter(ScanJob.batch_id.is_not(None)).count(), 6)
-            for batch_id in (morning["batch_id"], evening["batch_id"]):
-                batch = db.session.get(ScanBatch, batch_id)
-                kinds = {job.kind for job in ScanJob.query.filter_by(batch_id=batch.id)}
-                self.assertEqual(kinds, {"daily" if batch_id == morning["batch_id"] else "daily_light"})
+            self.assertEqual(ScanBatch.query.count(), 3)
+            self.assertEqual(ScanJob.query.filter(ScanJob.batch_id.is_not(None)).count(), 9)
+
             from cs2_inventory.services import maintenance_active
-            self.assertTrue(maintenance_active())
-            first = db.session.get(ScanBatch, morning["batch_id"])
-            for job in ScanJob.query.filter_by(batch_id=first.id):
-                job.status = "completed"
-            db.session.commit()
-            finish_batch(first.id)
-            self.assertTrue(maintenance_active())
-            second = db.session.get(ScanBatch, evening["batch_id"])
-            for job in ScanJob.query.filter_by(batch_id=second.id):
-                job.status = "completed"
-            db.session.commit()
-            finish_batch(second.id)
+            for batch, kind in ((morning, "daily"), (midday, "daily_light"), (evening, "daily_light")):
+                self.assertTrue(maintenance_active())
+                jobs = ScanJob.query.filter_by(batch_id=batch["batch_id"]).all()
+                self.assertEqual([job.kind for job in jobs], [kind] * 3)
+                for job in jobs:
+                    job.status = "completed"
+                db.session.commit()
+                finish_batch(batch["batch_id"])
             self.assertFalse(maintenance_active())
 
-    def test_scheduled_slot_key_maps_two_rounds_without_cross_day_catchup(self):
-        cases = [
-            (datetime(2026, 9, 6, 16, 0, tzinfo=timezone.utc), None),  # 北京 00:00
-            (datetime(2026, 9, 6, 20, 30, tzinfo=timezone.utc), None),  # 北京 04:30
-            (datetime(2026, 9, 7, 0, 30, tzinfo=timezone.utc), "2026-09-07-R2"),  # 北京 08:30 深度
-            (datetime(2026, 9, 7, 5, 0, tzinfo=timezone.utc), "2026-09-07-R2"),  # 北京 13:00 不重复建轮
-            (datetime(2026, 9, 7, 9, 59, tzinfo=timezone.utc), "2026-09-07-R2"),  # 北京 17:59
-            (datetime(2026, 9, 7, 14, 0, tzinfo=timezone.utc), "2026-09-07-R5"),  # 北京 22:00
-        ]
-        for moment, expected in cases:
-            self.assertEqual(scheduled_slot_key(moment), expected)
+    def test_scheduled_slot_key_maps_three_rounds_without_cross_day_catchup(self):
+        midnight = datetime(2026, 9, 6, 16, tzinfo=timezone.utc)  # 北京 9 月 7 日 00:00
+        for hour, minute, slot in [
+            (0, 0, None), (6, 59, None),
+            (7, 0, "R2"), (13, 59, "R2"),
+            (14, 0, "R3"), (20, 59, "R3"),
+            (21, 0, "R5"), (23, 59, "R5"), (24, 0, None),
+        ]:
+            with self.subTest(hour=hour, minute=minute):
+                moment = midnight + timedelta(hours=hour, minutes=minute)
+                self.assertEqual(scheduled_slot_key(moment), f"2026-09-07-{slot}" if slot else None)
 
     def test_deep_round_slot_enqueues_daily_kind_jobs(self):
         with self.app.app_context():

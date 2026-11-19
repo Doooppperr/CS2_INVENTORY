@@ -570,6 +570,8 @@ def prune_expired() -> dict:
         db.session.delete(row)
     db.session.commit()
     day_cutoff = (now.astimezone(BEIJING_TIMEZONE).date() - timedelta(days=7)).isoformat()
+    from .protected_feed import prune_scan_signals
+    prune_scan_signals(day_cutoff)
     DailyObservation.query.filter(DailyObservation.day < day_cutoff).delete(synchronize_session=False)
     db.session.commit()
     lifecycle = cleanup_lifecycle()
@@ -643,10 +645,10 @@ def quota_status() -> dict:
         ),
         "scheduled_scans_per_day": len(SCHEDULED_ROUNDS),
         "scheduled_scan_hours_beijing": [hour for hour, _, _ in SCHEDULED_ROUNDS],
-        "estimated_scheduled_credits_per_target_day": sum(
-            current_app.config["REQUESTS_PER_SCAN"]
-            for _, _, kind in SCHEDULED_ROUNDS
-        ) * current_app.config["INVENTORY_CREDITS_PER_REQUEST"],
+        "estimated_scheduled_credits_per_target_day": (
+            len(SCHEDULED_ROUNDS) * current_app.config["REQUESTS_PER_SCAN"]
+            * current_app.config["INVENTORY_CREDITS_PER_REQUEST"]
+        ),
     }
 
 

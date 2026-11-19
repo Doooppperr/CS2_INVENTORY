@@ -17,6 +17,8 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = os.getenv("CS2_COOKIE_SECURE", "0") == "1"
     SESSION_COOKIE_PATH = os.getenv("CS2_COOKIE_PATH", "/")
+    # 普通读请求不重发身份 Cookie，切换账号后慢请求也不会覆盖新会话。
+    SESSION_REFRESH_EACH_REQUEST = False
     TRUSTED_HOSTS = [
         host.strip()
         for host in os.getenv("CS2_TRUSTED_HOSTS", "localhost,127.0.0.1").split(",")

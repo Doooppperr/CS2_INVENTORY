@@ -99,16 +99,16 @@ class ScanBudgetTests(unittest.TestCase):
         self.assertEqual(job.status, "cancelled")
         self.assertEqual(QuotaUsage.query.count(), 0)
 
-    def test_schedule_never_creates_more_than_two_batches_per_beijing_day(self):
+    def test_schedule_never_creates_more_than_three_batches_per_beijing_day(self):
         start = datetime(2026, 10, 13, 16, tzinfo=timezone.utc)
         for minute in range(0, 1440, 15):
             enqueue_daily(now=start + timedelta(minutes=minute))
-        self.assertEqual(ScanBatch.query.count(), 2)
-        self.assertEqual({r.slot_key for r in ScanBatch.query.all()}, {"2026-10-14-R2", "2026-10-14-R5"})
+        self.assertEqual(ScanBatch.query.count(), 3)
+        self.assertEqual({r.slot_key for r in ScanBatch.query.all()}, {"2026-10-14-R2", "2026-10-14-R3", "2026-10-14-R5"})
         self.assertEqual({r.kind for r in ScanJob.query.all()}, {"daily", "daily_light"})
 
     def test_early_timer_catchup_skips_without_provider_call(self):
-        now = datetime(2026, 10, 14, 23, 59, tzinfo=timezone.utc)  # 北京次日 07:59
+        now = datetime(2026, 10, 14, 22, 59, tzinfo=timezone.utc)  # 北京次日 06:59
         with mock.patch("cs2_inventory.cli.refresh_official_usage") as refresh:
             result = enqueue_daily(now=now)
         self.assertEqual(result["jobs"], 0)
@@ -116,21 +116,26 @@ class ScanBudgetTests(unittest.TestCase):
         refresh.assert_not_called()
         self.assertIsNone(scheduled_slot_key(now))
 
-    def test_existing_r2_batch_survives_release_without_duplicate(self):
-        old = ScanBatch(kind="daily", slot_key="2026-10-14-R2", total_jobs=1)
-        db.session.add(old)
-        db.session.commit()
-        result = enqueue_daily(now=datetime(2026, 10, 14, 8, tzinfo=timezone.utc))
-        self.assertTrue(result["existing"])
-        self.assertEqual(result["batch_id"], old.id)
+    def test_existing_morning_and_evening_batches_survive_release_without_duplicates(self):
+        for suffix, utc_hour in [("R2", 0), ("R5", 13)]:
+            with self.subTest(suffix=suffix):
+                old = ScanBatch(kind="daily", slot_key=f"2026-10-14-{suffix}", total_jobs=1)
+                db.session.add(old)
+                db.session.commit()
+                with mock.patch("cs2_inventory.cli.refresh_official_usage") as refresh:
+                    result = enqueue_daily(now=datetime(2026, 10, 14, utc_hour, tzinfo=timezone.utc))
+                self.assertTrue(result["existing"])
+                self.assertEqual(result["batch_id"], old.id)
+                refresh.assert_not_called()
 
-    def test_timer_and_report_match_two_round_schedule(self):
+    def test_timer_and_report_match_three_round_schedule(self):
         timer = (Path(__file__).resolve().parents[1] / "deploy/cs2-inventory-schedule.timer").read_text()
         calendars = [line for line in timer.splitlines() if line.startswith("OnCalendar=")]
-        self.assertEqual(calendars, ["OnCalendar=*-*-* 08:00:00 Asia/Shanghai", "OnCalendar=*-*-* 20:00:00 Asia/Shanghai"])
+        self.assertEqual(calendars, [f"OnCalendar=*-*-* {hour:02}:00:00 Asia/Shanghai" for hour in (7, 14, 21)])
         status = quota_status()
-        self.assertEqual(status["scheduled_scans_per_day"], 2)
-        self.assertEqual(status["estimated_scheduled_credits_per_target_day"], 12)
+        self.assertEqual(status["scheduled_scans_per_day"], 3)
+        self.assertEqual(status["scheduled_scan_hours_beijing"], [7, 14, 21])
+        self.assertEqual(status["estimated_scheduled_credits_per_target_day"], 18)
 
     def test_renewed_subscription_excludes_previous_period_usage(self):
         state_set("official_quota_json", json.dumps({"available": True, "payload": {

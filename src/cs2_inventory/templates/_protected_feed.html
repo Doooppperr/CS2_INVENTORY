@@ -1,0 +1,28 @@
+<section id="protectedFeed" class="signal-panel" aria-labelledby="signalHeading">
+  <div class="signal-head">
+    <div><p class="signal-kicker">与上次扫描对比</p><h2 id="signalHeading">交易保护新增</h2></div>
+    <label class="slot-control"><span>扫描轮次</span><select id="signalSlot">
+      <option value="latest">当日最新结果</option><option value="07">07:00</option><option value="14">14:00</option><option value="21">21:00</option>
+    </select></label>
+  </div>
+  <div class="signal-body">
+    <div class="signal-summary">
+      <p>本轮新增件数</p><strong id="signalUnits">—</strong>
+      <dl><div><dt>新增饰品种类</dt><dd id="signalTypes">—</dd></div><div><dt>加仓账号</dt><dd id="signalOwners">—</dd></div></dl>
+      <p id="signalCoverage" class="signal-foot"></p><p id="signalStamp" class="signal-foot"></p>
+    </div>
+    <div class="signal-content">
+      <div id="signalTools" class="signal-tools" hidden>
+        <input type="search" id="signalSearch" placeholder="搜索新增饰品" aria-label="搜索新增饰品">
+        <select id="signalTarget" aria-label="按加仓账号筛选"><option value="">全部加仓账号</option></select>
+      </div>
+      <p id="signalNotice" role="status">正在读取本轮记录…</p>
+      <div id="signalList"></div>
+      <button type="button" id="signalMore" class="ghost" hidden>查看更多</button>
+      <button type="button" id="signalPrevious" class="ghost" hidden>查看前一天</button>
+      <button type="button" id="signalRetry" class="ghost" hidden>重新读取</button>
+      <button type="button" id="signalClear" class="ghost" hidden>清除筛选</button>
+      <a id="signalManage" href="{{ url_for('application', view='subscriptions') }}" hidden>管理我的监控 →</a>
+    </div>
+  </div>
+</section>

@@ -118,7 +118,7 @@ async function openDetail(id){
   $('detailProtected').textContent=d.inventory_sections?.protected?.total_items??'—';$('detailTime').textContent=fmt(d.last_complete_snapshot_at);
   const show=!!state.user.can_view_inventory_diagnostics;$('detailQuality').classList.toggle('hidden',!show);
   $('detailQuality').innerHTML=show?`<details><summary>扫描诊断</summary><p>${esc(d.monitor.scan_label||statusText(d.monitor.scan_status))} · ${esc(d.monitor.last_error||'')}</p><pre style="white-space:pre-wrap">${esc(JSON.stringify(d.diagnostics||{},null,2))}</pre></details>`:'';
-  if(first){state.historicalDetail=null;$('itemSearch').value='';$('protectedOnly').checked=false;}renderItems();await loadComparison(state.compareDays||1);
+  if(first){state.historicalDetail=null;$('itemSearch').value=params.get('item')||'';$('protectedOnly').checked=params.get('protected')==='1';}renderItems();if(!$('detailChanges').classList.contains('hidden'))await loadComparison(state.compareDays||1);
   if(d.monitor.updating)state.detailPoll=setTimeout(()=>{if(state.currentView==='detail')openDetail(id).catch(()=>{});},3000);
 }
 function renderItems(){
@@ -131,7 +131,7 @@ function renderItems(){
  }
  let count=0;$('itemRows').innerHTML=groups.map(section=>{const rows=(section.items||[]).filter(x=>norm(x.name).includes(q));count+=rows.length;return `<section><h4>${section.title}<small class="meta">更新时间 ${fmt(section.updated_at)}</small></h4>${rows.length?rows.map(x=>{const protectedCount=x.protectedCount??(x.is_trade_protected?x.count:0);return `<div class="item-row ${protectedCount?'protected-item':''}"><span class="item-name">${esc(x.name)}${protectedCount?`<span class="protected-badge">${protectedCount} 件交易保护中</span>`:''}</span><span class="qty">${only?protectedCount:x.count} 件</span></div>`}).join(''):'<div class="empty">暂无匹配的物品</div>'}</section>`}).join('');$('itemResultMeta').textContent=`${count} 项${q?'匹配结果':''}`;
 }
-async function loadComparison(days){state.compareDays=days;$('compareSwitch').querySelectorAll('button').forEach(b=>{const active=Number(b.dataset.days)===days;b.classList.toggle('active',active);b.classList.toggle('ghost',!active);b.disabled=true});$('compareContent').innerHTML='<p class="meta">Loading...</p>';try{state.comparison=await api(`api/monitors/${state.currentTarget}/compare?days=${days}`);renderComparison()}catch(e){$('compareContent').innerHTML=`<p class="error">${esc(e.message)}</p>`}finally{$('compareSwitch').querySelectorAll('button').forEach(b=>b.disabled=false)}}
+async function loadComparison(days){state.compareDays=days;$('compareSwitch').querySelectorAll('button').forEach(b=>{const active=Number(b.dataset.days)===days;b.classList.toggle('active',active);b.classList.toggle('ghost',!active);b.disabled=true});$('compareContent').innerHTML='<p class="meta">正在读取变化记录…</p>';try{state.comparison=await api(`api/monitors/${state.currentTarget}/compare?days=${days}`);renderComparison()}catch(e){$('compareContent').innerHTML=`<p class="error">${esc(e.message)}</p>`}finally{$('compareSwitch').querySelectorAll('button').forEach(b=>b.disabled=false)}}
 function renderComparison(){
   const d=state.comparison,f=d?.diff,show=!!state.user.can_view_inventory_diagnostics;
   if(!d?.baseline||!d.current||!f){$('compareContent').innerHTML='<div class="empty">暂无可展示的变化记录</div>';return;}
@@ -185,6 +185,8 @@ $('queryHistoryPrev').onclick=()=>{state.queryHistoryPage=Math.max(1,state.query
 $('queryHistoryNext').onclick=()=>{state.queryHistoryPage=Math.min(state.queryHistoryPages,state.queryHistoryPage+1);loadQueryHistory().catch(e=>toast(e.message,false))};
 function detailTab(tab){
  for(const [key,id] of [['inventory','detailInventory'],['changes','detailChanges'],['history','detailHistory']])$(id).classList.toggle('hidden',tab!==key);
+ for(const [key,id] of [['inventory','detailInventoryTab'],['changes','detailChangesTab'],['history','detailHistoryTab']]){const active=tab===key;$(id).classList.toggle('ghost',!active);$(id).setAttribute('aria-pressed',String(active));}
+ if(tab==='changes')loadComparison(state.compareDays||1);
  if(tab==='history'){
  const rows=state.detail?.history||[];
  $('detailHistory').innerHTML=rows.length?rows.map(x=>`<div class="history-row"><div><b>${fmt(x.scanned_at)}</b><p class="meta">库存 ${x.total_items??'—'} 件</p></div><button class="ghost snapshot-open" data-id="${x.id}">查看记录</button></div>`).join(''):'<div class="empty">暂无库存历史</div>';

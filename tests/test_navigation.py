@@ -2,7 +2,10 @@
 import unittest
 
 from bs4 import BeautifulSoup
+from werkzeug.security import generate_password_hash
 
+from cs2_inventory.database import db
+from cs2_inventory.models import User
 from tests import test_dashboard as fixtures
 
 
@@ -39,6 +42,8 @@ class NavigationTests(unittest.TestCase):
             soup = self.soup(path)
             self.assertIsNotNone(soup.select_one('#accountMenu #homeLink'))
             self.assertIsNotNone(soup.select_one('#accountMenu #navPassword'))
+            self.assertIsNotNone(soup.select_one('#accountMenu #navSwitch'))
+            self.assertEqual(soup.select_one('#switchAccountDialog #switchPassword')['type'], 'password')
             self.assertIsNone(soup.select_one('.workspace-nav button'))
             for name in ('selfOldPassword', 'selfNewPassword', 'selfConfirmPassword'):
                 self.assertEqual(soup.select_one('#'+name)['type'], 'password')
@@ -47,7 +52,8 @@ class NavigationTests(unittest.TestCase):
         for path in ('/app', '/app/', '/app?view=subscriptions', '/app?view=query',
                      '/app?view=queryHistory&query_page=2', '/monitors/1?source=admin'):
             self.assertIsNotNone(self.soup(path).select_one('#workspaceNavigation'))
-        js = self.client.get('/static/inventory.js').get_data(as_text=True)
+        with self.client.get('/static/inventory.js') as response:
+            js = response.get_data(as_text=True)
         self.assertIn("location.replace(consoleUrl('dashboard'))", js)
         self.assertIn("location.hash!=='#admin'", js)
         self.assertIn("queryHistoryPage:positiveInt(params.get('query_page'))", js)
@@ -58,6 +64,30 @@ class NavigationTests(unittest.TestCase):
         self.assertIn("url('app/dashboard')", html)
         self.assertIn('window.WorkspaceNavigation.destination(next,root)', html)
         self.assertNotIn("next&&next.startsWith('/')", html)
+
+    def test_account_switch_reauthenticates_and_replaces_personal_scope(self):
+        other = User(username='other_user', role='user', account_kind='internal', plan='permanent',
+                     password_hash=generate_password_hash('fixture-password'))
+        db.session.add(other)
+        db.session.commit()
+        token = self.client.get('/api/bootstrap').get_json()['csrf_token']
+        headers = {'X-CSRF-Token': token}
+        payload = {'username': other.username, 'password': 'wrong'}
+        self.assertEqual(self.client.post('/api/auth/login', json=payload, headers=headers).status_code, 401)
+        self.assertEqual(self.client.get('/api/monitors').get_json()['total'], 1)
+
+        payload['password'] = 'fixture-password'
+        self.assertEqual(self.client.post('/api/auth/login', json=payload).status_code, 400)
+        result = self.client.post('/api/auth/login', json=payload, headers=headers)
+        self.assertEqual(result.status_code, 200)
+        self.assertNotEqual(result.get_json()['csrf_token'], token)
+        self.assertEqual(self.client.get('/api/bootstrap').get_json()['user']['id'], other.id)
+        monitors = self.client.get('/api/monitors')
+        self.assertEqual(monitors.get_json()['total'], 0)
+        self.assertTrue(monitors.cache_control.no_store)
+        self.assertNotIn('Set-Cookie', monitors.headers)
+        self.assertIn(self.client.get(f'/api/monitors/{self.target.id}').status_code, (403, 404))
+        self.assertEqual(self.client.post('/api/auth/logout', headers=headers).status_code, 400)
 
 
 if __name__ == '__main__':

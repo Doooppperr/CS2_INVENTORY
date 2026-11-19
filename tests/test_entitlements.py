@@ -176,8 +176,8 @@ class EntitlementTests(unittest.TestCase):
             self.assertNotIn('static/theme.js`', html)
 
         self.assertIn(
-            '<span>导入 SteamID64 统一查看库存与历史变化</span>'
-            '<span>清晰记录交易保护资产 新增 移除和数量波动</span>',
+            '<span>先看谁新加仓了什么，再看完整库存。</span>'
+            '<span>按扫描轮次追踪仍在交易保护中的新增饰品。</span>',
             landing,
         )
         self.assertIn('<p class="lead semantic-lines">', landing)
@@ -202,15 +202,15 @@ class EntitlementTests(unittest.TestCase):
         for exact_price in ("328", "2888", "8888"):
             self.assertNotIn(exact_price, landing)
 
-    def test_public_landing_places_usage_notice_between_features_and_plans(self):
+    def test_public_landing_explains_first_monitor_and_additions_between_features_and_plans(self):
         landing = self.client.get("/").get_data(as_text=True)
 
         self.assertLess(landing.index('id="features"'), landing.index('id="usage"'))
         self.assertLess(landing.index('id="usage"'), landing.index('id="plans"'))
-        self.assertIn("受到交易保护的物品查询涉及复杂的数据转换", landing)
-        self.assertIn("首次提交一个 SteamID64 的库存查询通常需要 1 至 3 分钟", landing)
-        self.assertIn("开始查询后任务会转入后台执行", landing)
-        self.assertIn("期间可继续提交其他 SteamID64 并依次排队等待完成", landing)
+        self.assertIn("在「我的监控 → 管理订阅」输入 SteamID64", landing)
+        self.assertIn("首次扫描会建立库存记录", landing)
+        self.assertIn("打开每日看板，选择日期和扫描轮次", landing)
+        self.assertIn("展开新增饰品，即可查看加仓账号和件数", landing)
         self.assertIn(".notice-grid{grid-template-columns:repeat(2,minmax(0,1fr))", landing)
         self.assertIn(".grid,.notice-grid{grid-template-columns:1fr}", landing)
 

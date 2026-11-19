@@ -337,6 +337,21 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         response.headers["Vary"] = "Cookie"
         return response
 
+    @app.get("/api/dashboard/protected-additions")
+    @login_required
+    def dashboard_protected_additions(user):
+        from .protected_feed import protected_feed
+        try:
+            data = protected_feed(user, request.args)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+        response = jsonify(data)
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Vary"] = "Cookie"
+        return response
+
     @app.get("/api/dashboard/overview")
     @login_required
     def dashboard_overview(user):
@@ -479,6 +494,8 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         if job.expires_at and job.expires_at.replace(tzinfo=timezone.utc) <= utcnow():
             return jsonify({"error": "查询结果已过期"}), 410
         result = json.loads(job.result_json) if job.result_json else None
+        if result:
+            result.pop("protected_signal", None)
         return jsonify({"id": job.id, "status": job.status, "kind": job.kind, "result": result, "error": job.error})
 
     @app.get("/api/admin/users")
@@ -727,6 +744,9 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
 
     @app.after_request
     def inventory_presentation(response):
+        if request.path.startswith("/api/"):
+            response.cache_control.no_store = True
+            response.vary.add("Cookie")
         user = current_user()
         if response.is_json and user and not can_inventory_diagnostics(user):
             data = response.get_json()

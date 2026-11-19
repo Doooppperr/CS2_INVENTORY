@@ -25,7 +25,8 @@ class ProtectedGrowthBrowserTests(unittest.TestCase):
         cls.browser = cls.playwright.chromium.launch(channel=args.channel)
         app = Flask(__name__, template_folder=str(ROOT / 'src/cs2_inventory/templates'),
                     static_folder=str(ROOT / 'src/cs2_inventory/static'))
-        app.add_url_rule('/dashboard', endpoint='dashboard_page', view_func=lambda: '')
+        for endpoint, path in [('index', '/'), ('application', '/app'), ('dashboard_page', '/app/dashboard')]:
+            app.add_url_rule(path, endpoint=endpoint, view_func=lambda: '')
         app.config['INVENTORY_CREDITS_PER_REQUEST'] = 3
         with app.test_request_context('/'):
             cls.html = render_template('index.html', credits_per_request=3)
@@ -86,9 +87,11 @@ class ProtectedGrowthBrowserTests(unittest.TestCase):
         for width, theme in [(1440, 'dark'), (1440, 'light'), (390, 'dark'), (320, 'light')]:
             with self.subTest(width=width, theme=theme):
                 self.page.set_viewport_size({'width': width, 'height': 960})
-                self.page.goto('http://inventory.test/app')
+                self.page.goto('http://inventory.test/app?view=monitors')
                 expect(self.page.locator('.inventory-card')).to_have_count(30)
+                self.page.locator('#accountMenu summary').click()
                 self.page.locator('#app [data-theme-selector]').select_option(theme)
+                self.page.locator('#accountMenu summary').click()
                 card = self.page.locator('.inventory-card').first
                 expect(card.locator('.protection-growth')).to_have_text('七日内新增+121日内新增+3')
                 expect(self.page.locator('.inventory-card').nth(1).locator('.protection-growth')).to_have_text('七日内新增+01日内新增—')

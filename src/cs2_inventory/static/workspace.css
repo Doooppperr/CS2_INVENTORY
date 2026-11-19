@@ -1,0 +1,21 @@
+/* 工作台使用中性底色，琥珀色专门标记交易保护。 */
+:root {
+  --bg:#f3f5f7; --panel:#fff; --panel2:#f4f6f8; --input:#fff;
+  --text:#17252d; --muted:#52646e; --row-border:#d7e0e4; --line:#778a94;
+  --blue:#286858; --button-text:#fff; --hover:#eaf3ef; --active:#e3f1eb;
+  --focus:#278877; --summary:#f1f6f4;
+  --protected-start:#fff1ce; --protected-end:#fff7e4; --protected-border:#ddba70;
+  --protected-text:#735014; --protected-badge:#ffe2a0; --protected-badge-text:#5b3c08;
+}
+:root[data-theme="dark"] {
+  --bg:#10171c; --panel:#182228; --panel2:#202d34; --input:#131e24;
+  --text:#edf3f5; --muted:#a9bac3; --row-border:#34454f; --line:#566d78;
+  --blue:#76d1b1; --button-text:#10251c; --hover:#293e36; --active:#254437;
+  --focus:#91dbc4; --summary:#24342e;
+  --protected-start:#393021; --protected-end:#352c21; --protected-border:#715d38;
+  --protected-text:#f5d590; --protected-badge:#634921; --protected-badge-text:#ffe4a6;
+}
+body { font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
+:where(.shell) :is(input,button,select,summary,a):focus-visible {outline:2px solid var(--focus);outline-offset:2px}
+.workspace-nav a.active {border-color:transparent}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}

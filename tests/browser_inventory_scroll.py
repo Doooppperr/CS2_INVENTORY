@@ -27,7 +27,8 @@ class InventoryScrollTests(unittest.TestCase):
         cls.browser = cls.playwright.chromium.launch(channel=args.channel)
         app = Flask(__name__, template_folder=str(ROOT / 'src/cs2_inventory/templates'),
                     static_folder=str(ROOT / 'src/cs2_inventory/static'))
-        app.add_url_rule('/dashboard', endpoint='dashboard_page', view_func=lambda: '')
+        for endpoint, path in [('index', '/'), ('application', '/app'), ('dashboard_page', '/app/dashboard')]:
+            app.add_url_rule(path, endpoint=endpoint, view_func=lambda: '')
         app.config['INVENTORY_CREDITS_PER_REQUEST'] = 3
         with app.test_request_context('/'):
             cls.html = render_template('index.html', credits_per_request=3)

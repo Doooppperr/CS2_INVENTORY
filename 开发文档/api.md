@@ -41,6 +41,14 @@
 
 账号管理不提供停用或恢复语义。删除成功返回 `ok`、`deleted_user_id` 和 `deleted_targets`。监控、管理员用户、管理员目标三个列表接口均规范化 `page`，前端通过 `view`、`section`、`page`、`user_page`、`target_page` 保存导航状态。
 
-## 扫描预算状态（2026-10-14）
+## 扫描预算状态
 
-`quota` 新增 `billing_period_start`（北京时间）、`billing_period_source`（`provider_subscription` 或 `legacy_25th_estimate`）、`scheduled_scan_hours_beijing=[8,20]`、`estimated_scheduled_credits_per_target_day=24`。`scheduled_scans_per_day=2`。每日本地用量按北京时间零点统计；账期优先采用有效的供应商订阅区间，缺失/异常/过期时回退原每月 25 日估算，界面明确标记。本地余额始终为保守估算，未改写历史账本。
+`quota` 新增 `billing_period_start`（北京时间）、`billing_period_source`（`provider_subscription` 或 `legacy_25th_estimate`）、`scheduled_scan_hours_beijing=[7,14,21]`、`scheduled_scans_per_day=3`。默认每轮 2 次请求、每次估算 3 credits，故 `estimated_scheduled_credits_per_target_day=18`。每日本地用量按北京时间零点统计；账期优先采用有效的供应商订阅区间，缺失/异常/过期时回退原每月 25 日估算，界面明确标记。本地余额始终为保守估算，未改写历史账本。
+
+## 看板 · 本轮交易保护新增
+
+`GET /api/dashboard/protected-additions?date=YYYY-MM-DD&slot=latest&scope=mine`。日期按北京自然日；可选轮次为 `latest`（各账号当日最近有保护结果的一次）、`07`、`14`、`21`。指定时段按定时批次识别，不按快照写入的钟点推断。普通用户仅能查看订阅的目标；全量范围沿用看板权限。
+
+`summary` 包括总账号、已观察和可比较账号、加仓账号、种类及新增件数。`items` 按新增件数降序，含显示名、总件数和各账号的件数、备注、基线及扫描时间。首次或缺少可靠基线时 `added_units=null`；至少有一个可比账号但均无新增时为 0。
+
+当前保护分区与前一次有效保护扫描对齐；基线须包含完整库存。按资产身份计算正向增量，售出不抵消加仓，仅改名、转保护、能识别为历史持有的重新出现均不计入。1 / 7 日监控卡使用同一新增定义，但基线固定为对应自然日。每轮摘要保留本日及此前七日；升级前的 08 / 20 点记录不标作新的 07 / 21 点轮次。

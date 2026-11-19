@@ -7,10 +7,26 @@
   </nav>
   <details class="account-menu" id="accountMenu"><summary><span id="navUsername">账号</span><span aria-hidden="true">⌄</span></summary><div class="account-menu-body">
     <label class="theme-picker"><span>主题</span><select data-theme-selector aria-label="选择主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+    <button type="button" id="navSwitch" aria-haspopup="dialog">切换账号</button>
     <button type="button" id="navPassword">修改密码</button>
     <a id="homeLink" href="{{ url_for('index') }}">平台介绍</a>
     <button type="button" id="navLogout">退出登录</button>
     <p id="navError" role="alert"></p>
   </div></details>
 </header>
+<dialog id="switchAccountDialog" aria-labelledby="switchAccountTitle">
+  <form id="switchAccountForm" class="dialog-body">
+    <h3 id="switchAccountTitle">切换账号</h3>
+    <p class="account-current">当前账号 · <span id="switchCurrentUser"></span></p>
+    <label for="switchUsername">要登录的账号</label>
+    <input id="switchUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="switchPassword">密码</label>
+    <input id="switchPassword" name="password" type="password" autocomplete="current-password" required>
+    <p id="switchAccountMessage" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" id="switchAccountCancel" class="ghost">取消</button>
+      <button type="submit" id="switchAccountSubmit">登录并切换</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="selfPasswordDialog"><form id="selfPasswordForm" class="dialog-body"><h3>修改密码</h3><label for="selfOldPassword">当前密码</label><input id="selfOldPassword" type="password" autocomplete="current-password" required><label for="selfNewPassword">新密码</label><input id="selfNewPassword" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><label for="selfConfirmPassword">确认新密码</label><input id="selfConfirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="72" required><p id="selfPasswordMessage" role="status"></p><div class="dialog-actions"><button type="button" id="selfPasswordCancel" class="ghost">取消</button><button type="submit" id="selfPasswordSave">保存</button></div></form></dialog>

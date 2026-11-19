@@ -29,6 +29,7 @@ from .models import (
     utcnow,
 )
 from .network import steam_urlopen
+from .protected_feed import scan_signal
 from .services import prune_expired, state_set, store_snapshot
 from .unified import public_payload, unify_inventory
 
@@ -320,7 +321,8 @@ def _run_inventory_job(job_id: int) -> None:
                 target.profile_updated_at = utcnow()
             snapshot = store_snapshot(target, unified)
             record_daily_job(job, target, snapshot)
-            job.result_json = json.dumps({"target_id": target.id, "query_alias": query_alias, "diagnostics": {
+            job.result_json = json.dumps({"target_id": target.id, "query_alias": query_alias,
+                "protected_signal": scan_signal(snapshot, unified["_quality"]), "diagnostics": {
                 **unified.get("_quality", {}), "elapsed_ms": unified["elapsed_ms"], "credits": charged,
                 "errors": unified["errors"]}}, ensure_ascii=False)
         else:
@@ -359,7 +361,7 @@ def _finish_job(job_id: int, *, status: str, error: str | None = None) -> None:
 
 
 def process_batch_group(job_ids: list[int]) -> None:
-    """晚间任务与其他任务共用 API 单源引擎；各目标故障隔离。"""
+    """午间、晚间任务与其他任务共用 API 单源引擎；各目标故障隔离。"""
     for job_id in job_ids:
         job = db.session.get(ScanJob, job_id)
         if job and job.status == "running":

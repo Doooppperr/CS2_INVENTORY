@@ -1,6 +1,7 @@
 """保护卡片新增统计：资产正向增量、自然日基线和独立分区。"""
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from cs2_inventory.database import db
 from cs2_inventory.inventory_views import inventory_view
@@ -17,11 +18,25 @@ class ProtectedAdditionsTests(unittest.TestCase):
 
     def snapshot(self, days=0, ids=("101",), hour=2, second=None, **fields):
         rows = [item for key in ids for item in protected(key, **fields)]
-        row = self.save(first=rows, second=second)
-        # 2026-10-23 北京时间 10:00；测试不依赖实际执行日期。
-        row.scanned_at = datetime(2026, 10, 23, hour, tzinfo=timezone.utc) - timedelta(days=days)
-        db.session.commit()
-        return row
+        stamp = datetime(2026, 10, 23, hour, tzinfo=timezone.utc) - timedelta(days=days)
+        with patch("cs2_inventory.services.utcnow", return_value=stamp):
+            return self.save(first=rows, second=ordinary(("901",)) if second is None else second)
+
+    def test_old_ordinary_moving_to_protected_is_not_an_arrival(self):
+        self.snapshot(1, ids=(), second=ordinary(("105",)))
+        self.snapshot(ids=("105", "106"))
+        self.assertEqual(self.additions()["1"], 1)
+
+    def test_previously_seen_asset_returning_is_not_an_arrival(self):
+        self.snapshot(2, ("106",))
+        self.snapshot(1, ("101",))
+        self.snapshot(ids=("106", "107"))
+        self.assertEqual(self.additions()["1"], 1)
+
+    def test_incomplete_ordinary_baseline_cannot_establish_an_arrival(self):
+        self.snapshot(1, ("101",), second=fixtures.engine.SteamQueryError("HTTP 403: fixture"))
+        self.snapshot(ids=("101", "105"))
+        self.assertIsNone(self.additions()["1"])
 
     def additions(self):
         return inventory_view(self.target.id, self.user, include_items=False)["protected_additions"]

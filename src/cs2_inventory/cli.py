@@ -19,7 +19,7 @@ def enqueue_daily(*, now: datetime | None = None) -> dict:
     cleanup_lifecycle()
     slot_key = scheduled_slot_key(now)
     if slot_key is None:
-        return {"jobs": 0, "skipped": True, "slot_key": None, "reason": "北京时间 08:00 前不补扫"}
+        return {"jobs": 0, "skipped": True, "slot_key": None, "reason": f"北京时间 {SCHEDULED_ROUNDS[0][0]:02d}:00 前不补扫"}
     existing = ScanBatch.query.filter_by(slot_key=slot_key).first()
     if existing:
         return {"batch_id": existing.id, "jobs": existing.total_jobs, "existing": True, "slot_key": slot_key}
@@ -43,10 +43,8 @@ def enqueue_daily(*, now: datetime | None = None) -> dict:
         db.session.rollback()
         existing = ScanBatch.query.filter_by(slot_key=slot_key).one()
         return {"batch_id": existing.id, "jobs": existing.total_jobs, "existing": True, "slot_key": slot_key}
+    job_kind = next(kind for _, suffix, kind in SCHEDULED_ROUNDS if slot_key.endswith(f"-{suffix}"))
     for target in targets:
-        # 08:00 深度多源扫描，20:00 单库存轻量扫描。
-        # （parse=1 + try_first_seven_days_blocked_items=1，可直接发现交易保护中的新物品）。
-        job_kind = next(kind for _, suffix, kind in SCHEDULED_ROUNDS if slot_key.endswith(f"-{suffix}"))
         db.session.add(ScanJob(target_id=target.id, steamid=target.steamid, batch_id=batch.id, kind=job_kind))
         target.scan_status = "queued"
     if targets:

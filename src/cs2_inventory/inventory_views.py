@@ -9,40 +9,36 @@ from .api_inventory import API_POLICIES, SECTIONS
 from .auth import can_inventory_diagnostics
 from .entitlements import snapshot_query_for_user
 from .models import ScanJob, Snapshot, beijing_iso
-from .observation import row_evidence, snapshot_quality
+from .observation import new_protected_units, row_evidence, snapshot_quality
 
 
 def protected_additions(rows, current):
-    """按北京时间目标日末次完整保护分区，统计仍在保护中的资产正向增量。
-
-    普通分区失败不影响统计；缺失基线不回退、不把首次观测当作新增。
-    """
+    """按北京时间自然日对照资产身份；当前保护分区和基线全库存分别取证。"""
     result = {"7": None, "1": None}
     if current is None:
         return result
     quality = snapshot_quality(current)
     if not quality.get("api_contexts", {}).get("protected", {}).get("complete"):
         return result
-    policy = quality.get("source_policy")
     current_date = date.fromisoformat(beijing_iso(current.scanned_at)[:10])
-
-    def amounts(row):
-        counts = Counter()
-        for item in row.items:
-            if item.is_trade_protected and "protected" in row_evidence(item).get("api_contexts", []):
-                counts[item.asset_key] += item.amount
-        return counts
-
-    latest = amounts(current)
-    for days in (7, 1):
-        target_date = (current_date - timedelta(days=days)).isoformat()
-        baseline = next((row for row in rows
-                         if beijing_iso(row.scanned_at)[:10] == target_date
-                         and snapshot_quality(row).get("source_policy") == policy
-                         and snapshot_quality(row).get("api_contexts", {}).get("protected", {}).get("complete")), None)
-        if baseline is not None:
-            previous = amounts(baseline)
-            result[str(days)] = sum(max(count - previous[key], 0) for key, count in latest.items())
+    days = {(current_date - timedelta(days=n)).isoformat(): str(n) for n in (7, 1)}
+    protected = [item for item in current.items if item.is_trade_protected and
+                 "protected" in row_evidence(item).get("api_contexts", [])]
+    for row in rows:
+        key = beijing_iso(row.scanned_at)[:10]
+        if key not in days:
+            continue
+        baseline = snapshot_quality(row)
+        if (baseline.get("source_policy") != quality.get("source_policy") or
+                not baseline.get("api_contexts", {}).get("protected", {}).get("complete")):
+            continue
+        period = days.pop(key)
+        if baseline["comparable"]:
+            before = {item.asset_key: item.amount for item in row.items}
+            result[period] = sum(new_protected_units(item.asset_key, item.amount, item.first_seen_at,
+                                 before.get(item.asset_key), row.scanned_at) for item in protected)
+        if not days:
+            break
     return result
 
 
