@@ -6,6 +6,8 @@
   const fmt = value => value ? new Date(value).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai', hour12:false}) : '—';
   const monitorUrl = id => `${root.dataset.app.replace(/\/$/,'')}/monitors/${encodeURIComponent(id)}`;
   let page=1, pages=1, generation=0, loading=false, diagnostics=false, ready=false, overviewRequest=null;
+  const checkInterval=5*60*1000;
+  let following=false,lastCheck=0,checking=false,ticker;
   const stateNames={ready:'校验通过',partial:'待核验',private:'已私密',failed:'扫描失败',pending:'待扫描 / 扫描中',missing:'没有早间记录'};
   const clearDaily = () => {
     for(const id of ['rows','stats','qualityReasons','accountStatuses'])$(id).replaceChildren();
@@ -22,6 +24,7 @@
   function syncUrl(){
     const values=parameters(), defaults={section:'signals',sort:'accounts',direction:'all',q:'',min_accounts:'2',min_per_account:'1',min_single:'2',match:'any',days:'7',page:'1'};
     for(const [key,value] of Object.entries(defaults))if(values.get(key)===value)values.delete(key);
+    if(following)values.delete('date');
     window.ProtectedFeed.urlFields(values);
     if($('dailyDetails').open)values.set('details','1');
     history.replaceState(null,'',`?${values}`);
@@ -36,6 +39,39 @@
       if(!signal.aborted)window.InventoryOverview.render(data);
     }catch(error){if(!signal.aborted)$('error').textContent=`趋势读取失败：${error.message}`;}
   }
+  function setFollowing(value){
+    following=value;
+    $('followLatest').textContent=value?'刷新最新':'查看最新';
+  }
+  function updateDateRange(){
+    const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'});
+    const min=new Date(`${today}T00:00:00+08:00`);min.setUTCDate(min.getUTCDate()-7);
+    $('date').max=today;$('date').min=min.toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'});
+    return today;
+  }
+  async function readLatest(background=false){
+    updateDateRange();
+    lastCheck=Date.now();
+    const applied=await window.ProtectedFeed.refresh({recent:true,background});
+    if(applied && following){
+      loadOverview();
+      if($('dailyDetails').open)load();
+    }
+  }
+  async function checkForNewScan(){
+    if(!ready || !following || document.hidden || checking || Date.now()-lastCheck<checkInterval || $('protectedFeed').getAttribute('aria-busy')==='true')return;
+    lastCheck=Date.now();checking=true;
+    const scope=$('scope').value;
+    try{
+      const current=await get(`${root.dataset.revision}?scope=${encodeURIComponent(scope)}`);
+      if(following && scope===$('scope').value && current.revision!==window.ProtectedFeed.revision)await readLatest(true);
+    }catch{/* 后台检查失败保留当前结果；可以手动刷新。 */}
+    finally{checking=false;}
+  }
+  $('followLatest').onclick=()=>{
+    setFollowing(true);$('signalSlot').value='latest';page=1;syncUrl();readLatest();
+  };
+  document.addEventListener('visibilitychange',checkForNewScan);
   function changeDateOrScope(){
     page=1;syncUrl();window.ProtectedFeed.refresh();loadOverview();
     if($('dailyDetails').open)load();else{generation++;clearDaily();}
@@ -92,12 +128,12 @@
   $('advancedFilters').addEventListener('keydown',event=>{if(event.key==='Escape'){$('advancedFilters').open=false;$('advancedFilters').querySelector('summary').focus();}});
   $('prev').onclick=()=>{if(!loading&&page>1){page--;load();}};$('next').onclick=()=>{if(!loading&&page<pages){page++;load();}};
   $('section').onchange=()=>switchSection($('section').value);
-  $('date').onchange=()=>{if($('date').reportValidity())changeDateOrScope();};
-  $('scope').onchange=changeDateOrScope;
+  $('date').onchange=()=>{if($('date').reportValidity()){setFollowing(false);changeDateOrScope();}};
+  $('scope').onchange=()=>{if(following){page=1;syncUrl();readLatest();}else changeDateOrScope();};
   $('overviewDays').onchange=()=>{syncUrl();loadOverview();};
   document.querySelectorAll('[data-section]').forEach(button=>button.onclick=()=>switchSection(button.dataset.section));
   $('resetFilters').onclick=()=>{const date=$('date').value,scope=$('scope').value,days=$('overviewDays').value;clearTimeout(searchTimer);$('filters').reset();$('advancedFilters').open=false;$('date').value=date;$('scope').value=scope;$('overviewDays').value=days;syncSection();page=1;load();};
-  addEventListener('pagehide',()=>{clearTimeout(searchTimer);generation++;overviewRequest?.abort();clearDaily();window.InventoryOverview.clear();window.ProtectedFeed.clear();});
+  addEventListener('pagehide',()=>{clearTimeout(searchTimer);clearInterval(ticker);ready=false;generation++;overviewRequest?.abort();clearDaily();window.InventoryOverview.clear();window.ProtectedFeed.clear();});
   addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
   async function boot(){
     try{
@@ -108,14 +144,19 @@
 
       $('scopeLabel').classList.toggle('hidden',!diagnostics);
       $('scope').value=diagnostics?'all':'mine';
-      const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'}),min=new Date(`${today}T00:00:00+08:00`);min.setUTCDate(min.getUTCDate()-7);
-      $('date').value=today;$('date').max=today;$('date').min=min.toLocaleDateString('en-CA',{timeZone:'Asia/Shanghai'});
+      $('date').value=updateDateRange();
       const query=new URLSearchParams(location.search);
       for(const element of $('filters').elements){if(!element.name||!query.has(element.name))continue;if(element.type==='checkbox')element.checked=query.get(element.name)==='1';else element.value=query.get(element.name);}
       if(!diagnostics&&!['signals','reappeared'].includes($('section').value))$('section').value='signals';if(!diagnostics)$('scope').value='mine';syncSection();page=Math.max(1,parseInt(query.get('page'),10)||1);
-      window.ProtectedFeed.init({get,syncUrl,query});ready=true;
+      window.ProtectedFeed.init({get,syncUrl,query,pinDate:()=>setFollowing(false),retry:()=>following?readLatest():window.ProtectedFeed.refresh()});
+      // 默认入口以最近有记录的北京自然日为准；带日期或轮次的链接保持原选择。
+      const recent=!query.has('date')&&!query.has('slot');
+      setFollowing(recent);lastCheck=Date.now();
+      if(recent)await window.ProtectedFeed.refresh({recent:true});
+      ready=true;$('followLatest').disabled=false;
+      ticker=setInterval(checkForNewScan,checkInterval);
       $('dailyDetails').open=query.get('details')==='1'||(!query.has('details')&&(query.has('peers')||query.has('single')||!!query.get('q')||page>1||$('section').value!=='signals'));
-      syncUrl();window.ProtectedFeed.refresh();await loadOverview();
+      syncUrl();if(!recent)window.ProtectedFeed.refresh();await loadOverview();
     }catch(error){clearDaily();$('error').textContent=error.message;}
   }
   boot();

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -137,6 +138,10 @@ def _dates(args):
     suffixes = {f"{hour:02d}": suffix for hour, suffix, _ in SCHEDULED_ROUNDS}
     if slot not in {"latest", *suffixes}:
         raise ValueError("扫描轮次无效")
+    if args.get("date") == "recent":
+        if slot != "latest":
+            raise ValueError("查找最近记录时请选择最新轮次")
+        return None, slot, None
     try:
         day = (
             date.fromisoformat(args["date"])
@@ -216,23 +221,49 @@ def _legacy_reports(target_ids, start, end):
     return _reports(pairs)
 
 
-def protected_feed(user, args):
+def _visible_scope(user, args):
     scope = dashboard_scope(user, args)
     state = entitlement_state(user)
     if state == "expired":
         raise PermissionError("账号已过期")
-    day, slot, slot_key = _dates(args)
-    subs = {
-        sub.target_id: sub.remark
-        for sub in Subscription.query.filter_by(user_id=user.id)
-    }
     targets = db.session.query(
-        SteamTarget.id, SteamTarget.persona_name, SteamTarget.steamid
-    )
+        SteamTarget.id, SteamTarget.persona_name, SteamTarget.steamid, Subscription.remark
+    ).outerjoin(Subscription, and_(Subscription.target_id == SteamTarget.id, Subscription.user_id == user.id))
     if scope == "mine":
-        targets = targets.filter(SteamTarget.id.in_(subs))
-    labels = {t.id: subs.get(t.id) or t.persona_name or t.steamid for t in targets}
+        targets = targets.filter(Subscription.id.is_not(None))
+    labels = {t.id: t.remark or t.persona_name or t.steamid for t in targets}
+    cutoff = user.activation_expires_at.replace(tzinfo=None) if state == "grace" else None
+    return scope, labels, cutoff
+
+
+def _revision(labels, now, cutoff):
+    """仅聚合八天内的扫描元数据，不取库存包、摘要正文或饰品明细。"""
+    day = now.astimezone(BEIJING_TIMEZONE).date()
+    start = datetime.combine(day - timedelta(days=7), time.min, BEIJING_TIMEZONE).astimezone(timezone.utc)
+    end = cutoff or now.replace(tzinfo=None)
+    jobs = db.session.query(func.count(ScanJob.id), func.max(ScanJob.id), func.max(ScanJob.finished_at)).filter(
+        ScanJob.target_id.in_(labels), ScanJob.status == "completed",
+        ScanJob.finished_at >= start, ScanJob.finished_at <= end,
+    ).one()
+    snapshots = db.session.query(func.count(Snapshot.id), func.max(Snapshot.id), func.max(Snapshot.scanned_at)).filter(
+        Snapshot.target_id.in_(labels), Snapshot.scanned_at >= start, Snapshot.scanned_at <= end,
+    ).one()
+    source = [day, sorted(labels.items()), list(jobs), list(snapshots)]
+    return hashlib.sha256(json.dumps(source, default=str, ensure_ascii=False).encode()).hexdigest()
+
+
+def scan_revision(user, args):
+    _, labels, cutoff = _visible_scope(user, args)
+    return {"revision": _revision(labels, utcnow(), cutoff)}
+
+
+def protected_feed(user, args):
+    scope, labels, cutoff = _visible_scope(user, args)
+    day, slot, slot_key = _dates(args)
+    choose_recent_day = args.get("date") == "recent"
     now = utcnow()
+    # 先取版本再读结果：若其间有新扫描，下一次版本检查仍能发现。
+    revision = _revision(labels, now, cutoff)
     start_day = day or (now.astimezone(BEIJING_TIMEZONE).date() - timedelta(days=7))
     start = (
         datetime.combine(start_day, time.min, BEIJING_TIMEZONE)
@@ -243,9 +274,6 @@ def protected_feed(user, args):
         start + timedelta(days=1)
         if day
         else now.replace(tzinfo=None) + timedelta(microseconds=1)
-    )
-    cutoff = (
-        user.activation_expires_at.replace(tzinfo=None) if state == "grace" else None
     )
     if cutoff:
         end = min(end, cutoff + timedelta(microseconds=1))
@@ -270,13 +298,16 @@ def protected_feed(user, args):
         query = query.filter(
             ScanJob.finished_at >= start, ScanJob.finished_at < end + timedelta(days=1)
         )
-        if day:
+        if day or choose_recent_day:
             observed_day = func.substr(
                 func.json_extract(ScanJob.result_json, signal_path + ".scanned_at"),
                 1,
                 10,
             )
-            query = query.filter(observed_day == day.isoformat())
+            if choose_recent_day:
+                query = query.filter(ScanJob.finished_at < end, observed_day >= start_day.isoformat())
+            else:
+                query = query.filter(observed_day == day.isoformat())
     if cutoff:
         query = query.filter(ScanJob.finished_at <= cutoff)
     selected = query.subquery()
@@ -289,7 +320,23 @@ def protected_feed(user, args):
     )
     records = {target_id: json.loads(raw) for target_id, raw in recent}
     if not slot_key:
-        records.update(_legacy_reports(labels.keys() - records.keys(), start, end))
+        missing = labels.keys() - records.keys()
+        # 摘要与未归档快照可能共存。只为比已有摘要更新的目标打开库存包。
+        if choose_recent_day and records:
+            newest = (
+                db.session.query(Snapshot.target_id, func.max(Snapshot.scanned_at))
+                .filter(Snapshot.target_id.in_(records), Snapshot.scanned_at >= start, Snapshot.scanned_at < end)
+                .group_by(Snapshot.target_id)
+            )
+            missing.update(tid for tid, at in newest if beijing_iso(at) > records[tid]["scanned_at"])
+        for tid, record in _legacy_reports(missing, start, end).items():
+            if tid not in records or record["scanned_at"] > records[tid]["scanned_at"]:
+                records[tid] = record
+    if choose_recent_day:
+        # 选择有保护记录的最近自然日，而非有新增的最近日。
+        latest_date = max((r["scanned_at"][:10] for r in records.values()), default=None)
+        day = date.fromisoformat(latest_date) if latest_date else now.astimezone(BEIJING_TIMEZONE).date()
+        records = {tid: r for tid, r in records.items() if r["scanned_at"][:10] == latest_date}
 
     items = {}
     changed_accounts = 0
@@ -301,6 +348,11 @@ def protected_feed(user, args):
             item = items.setdefault(
                 detail["key"], {"name": detail["name"], "count": 0, "accounts": []}
             )
+            # 轮次摘要的 key 为市场名；没有市场名时则沿用展示名。
+            if detail["name"] != detail["key"]:
+                item["market_name"] = detail["key"]
+                if item["name"] == detail["key"]:
+                    item["name"] = detail["name"]
             item["count"] += detail["count"]
             item["accounts"].append(
                 {
@@ -314,8 +366,20 @@ def protected_feed(user, args):
     for item in items.values():
         item["account_count"] = len(item["accounts"])
         item["accounts"].sort(key=lambda entry: (-entry["count"], entry["target_id"]))
+    # 包括本轮没有新增或没有扫描的目标，切换轮次不会改变用户关注的账号。
+    targets = [
+        {
+            "target_id": tid,
+            "label": label,
+            "scanned_at": records[tid]["scanned_at"] if tid in records else None,
+            "baseline_at": records[tid]["baseline_at"] if tid in records else None,
+        }
+        for tid, label in labels.items()
+    ]
     return {
         "scope": scope,
+        "revision": revision,
+        "targets": targets,
         "slot": slot,
         "date": day.isoformat() if day else None,
         "updated_at": max((r["scanned_at"] for r in records.values()), default=None),

@@ -157,3 +157,5 @@ body{background-image:none}body::before,body::after{display:none}
   .signal-item li a {grid-column:1/-1;justify-self:start;min-height:28px;display:inline-flex;align-items:center}
   .report-heading {gap:8px;margin-top:24px}.report-heading>.meta {font-size:11px}
 }
+
+#followLatest {font-size:13px;padding:8px 12px;min-height:38px}

@@ -36,6 +36,7 @@ cli.add_argument("--screenshots", type=Path)
 args, test_args = cli.parse_known_args()
 NAMES = ["AK-47 | 红线（久经沙场）", "M4A1 消音型 | 印花集（略有磨损）", "AWP | 二西莫夫（久经沙场）",
          "格洛克 18 型 | 水灵（崭新出厂）", "USP 消音版 | 脑洞大开（略有磨损）"]
+MARKET_NAMES = ["AK-47 | Redline (Field-Tested)", *NAMES[1:]]
 OWNERS = ["北岸收藏", "枫叶仓", "海盐俱乐部"]
 AMOUNTS = [[5, 2, 1, 0, 0], [3, 0, 2, 0, 1], [0, 1, 0, 2, 0]]
 TOTAL = str(sum(map(sum, AMOUNTS)))
@@ -86,7 +87,8 @@ def seed(today):
         db.session.add(batch)
         db.session.flush()
         for target, amounts in zip(targets, AMOUNTS):
-            rows = [{"key": name, "name": name, "count": count} for name, count in zip(NAMES, amounts) if count]
+            rows = [{"key": market, "name": name, "count": count}
+                    for market, name, count in zip(MARKET_NAMES, NAMES, amounts) if count]
             report = {"scanned_at": moment.isoformat(),
                       "baseline_at": (moment-timedelta(hours=10 if hour==7 else 7)).isoformat() if state != "baseline" else None,
                       "items": rows if state == "items" else []}
@@ -189,6 +191,124 @@ class WorkbenchBrowserTests(unittest.TestCase):
         expect(self.find("#signalNotice")).to_contain_text("没有匹配")
         self.find("#signalClear").click()
         expect(self.find("#signalList details")).to_have_count(5)
+
+    def test_focus_account_survives_zero_baseline_and_unobserved_rounds(self):
+        self.open()
+        self.find("#signalTarget").select_option(label=OWNERS[0])
+        self.find("#signalSearch").fill("红线")
+        expect(self.find("#signalUnits")).to_have_text("5", timeout=1500)
+        expect(self.find("#signalTypes")).to_have_text("1")
+        expect(self.find("#signalOwners")).to_have_text("1")
+        self.find("#date").fill(self.yesterday)
+        self.find("#signalSlot").select_option("07")
+        expect(self.find("#signalUnits")).to_have_text("0")
+        expect(self.find("#signalTarget option:checked")).to_have_text(OWNERS[0])
+        self.find("#signalSlot").select_option("14")
+        expect(self.find("#signalUnits")).to_have_text("—")
+        expect(self.find("#signalNotice")).to_contain_text("可对比")
+        self.find("#date").fill(self.today.isoformat())
+        expect(self.find("#signalNotice")).to_contain_text("扫描结果")
+        expect(self.find("#signalTarget option:checked")).to_have_text(OWNERS[0])
+        self.find("#signalSlot").select_option("07")
+        expect(self.find("#signalUnits")).to_have_text("5")
+
+    def test_default_before_first_scan_uses_real_date_but_explicit_date_is_kept(self):
+        next_day=self.today+timedelta(days=1)
+        before_scan=datetime.combine(next_day,time(6,50),BEIJING_TIMEZONE)
+        self.page.clock.set_fixed_time(before_scan)
+        calls=[]
+        self.page.on("request",lambda req: calls.append(req.url))
+        with patch("cs2_inventory.protected_feed.utcnow",return_value=before_scan.astimezone(timezone.utc)), \
+             patch("cs2_inventory.dashboard_overview.utcnow",return_value=before_scan.astimezone(timezone.utc)):
+            self.page.goto("/app/dashboard")
+            expect(self.find("#signalUnits")).to_have_text(TOTAL)
+            expect(self.find("#date")).to_have_value(str(self.today))
+            expect(self.find("#signalStamp")).to_contain_text(self.today.strftime("%m/%d"))
+            expect(self.find("#trendChart svg")).to_be_visible()
+            self.assertEqual(len([u for u in calls if "/protected-additions?" in u]),1)
+            self.assertTrue(any(f"/overview?date={self.today}" in u for u in calls))
+            self.page.goto(f"/app/dashboard?date={next_day}")
+            expect(self.find("#signalNotice")).to_contain_text("暂无可用")
+            expect(self.find("#date")).to_have_value(str(next_day))
+            expect(self.find("#signalUnits")).to_have_text("—")
+
+    def test_search_by_weapon_finish_and_wear_without_new_requests(self):
+        self.open()
+        requests=[]
+        self.page.on("request", lambda req: requests.append(urlsplit(req.url).path))
+        for term in ("AK47 红线", "久经 红线", "ＡＫ４７ redline", "redline field tested"):
+            self.find("#signalSearch").fill(term)
+            expect(self.find("#signalUnits")).to_have_text("8")
+            expect(self.find("#signalList details")).to_have_count(1)
+            expect(self.find("#signalList summary")).to_contain_text(NAMES[0])
+        self.find("#signalSearch").fill("红线 崭新")
+        expect(self.find("#signalList details")).to_have_count(0)
+        self.assertNotIn("/api/dashboard/protected-additions",requests)
+
+    def test_open_dashboard_picks_up_finished_scan_and_leaves_history_pinned(self):
+        start = datetime.combine(self.today, time(13,59), BEIJING_TIMEZONE)
+        finished = start + timedelta(minutes=4)
+        now = [start]
+        batch_id = None
+        self.page.clock.set_fixed_time(start)
+        try:
+            with patch("cs2_inventory.protected_feed.utcnow", side_effect=lambda:now[0].astimezone(timezone.utc)):
+                self.open()
+                with self.app.app_context():
+                    batch = ScanBatch(kind="daily",slot_key=f"{self.today}-R3",status="completed",total_jobs=3,
+                                      completed_jobs=3,finished_at=finished.astimezone(timezone.utc))
+                    db.session.add(batch)
+                    db.session.flush()
+                    batch_id=batch.id
+                    for t in SteamTarget.query.all():
+                        if t.persona_name not in OWNERS:
+                            continue
+                        report={"scanned_at":finished.isoformat(),"baseline_at":clock(self.today,7).isoformat(),
+                                "items":[{"key":MARKET_NAMES[0],"name":NAMES[0],"count":7}]}
+                        db.session.add(ScanJob(target_id=t.id,steamid=t.steamid,batch_id=batch.id,kind="daily_light",
+                            status="completed",finished_at=finished.astimezone(timezone.utc),result_json=json.dumps({"protected_signal":report})))
+                    db.session.commit()
+                now[0]=finished+timedelta(minutes=4)
+                self.page.clock.set_fixed_time(now[0])
+                actual=self.context.request.get(f"/api/dashboard/protected-additions?date={self.today}").json()
+                self.assertEqual(actual["summary"]["added_units"],21)
+                # 回到一个已打开的监控标签页；真实后台刚完成新一轮。
+                self.page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+                expect(self.find("#signalUnits")).to_have_text("21", timeout=2500)
+                self.find("#date").fill(self.yesterday)
+                expect(self.find("#signalUnits")).to_have_text(TOTAL)
+                now[0]+=timedelta(hours=1)
+                self.page.clock.set_fixed_time(now[0])
+                self.page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+                expect(self.find("#date")).to_have_value(self.yesterday)
+                self.find("#followLatest").click()
+                expect(self.find("#date")).to_have_value(str(self.today))
+                expect(self.find("#signalUnits")).to_have_text("21")
+        finally:
+            if batch_id is not None:
+                with self.app.app_context():
+                    ScanJob.query.filter_by(batch_id=batch_id).delete()
+                    db.session.delete(db.session.get(ScanBatch,batch_id))
+                    db.session.commit()
+
+    def test_unchanged_or_hidden_board_does_not_reload_reports(self):
+        start=datetime.combine(self.today,time(11,15),BEIJING_TIMEZONE)
+        self.page.clock.set_fixed_time(start)
+        self.open()
+        rows=self.find("#signalList details")
+        rows.first.locator("summary").click()
+        seen=[]
+        self.page.on("request", lambda req:seen.append(urlsplit(req.url).path))
+        self.page.clock.set_fixed_time(start+timedelta(minutes=6))
+        with self.page.expect_response(lambda r: r.url.split("?")[0].endswith("/scan-revision")):
+            self.page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        self.page.wait_for_load_state("networkidle")
+        self.assertEqual(seen,["/api/dashboard/scan-revision"])
+        self.assertTrue(rows.first.evaluate("el=>el.open"))
+        self.page.clock.set_fixed_time(start+timedelta(minutes=12))
+        self.page.evaluate("""() => { Object.defineProperty(document,'hidden',{configurable:true,value:true});
+          document.dispatchEvent(new Event('visibilitychange')); }""")
+        self.assertEqual(seen,["/api/dashboard/scan-revision"])
 
     def test_daily_fetch_is_lazy_and_filters_independent(self):
         calls = Counter()

@@ -49,6 +49,76 @@ class ProtectedFeedTests(unittest.TestCase):
         self.assertIn("no-store", response.headers["Cache-Control"])
         return response.json
 
+    def revision(self, user=None):
+        response = self.client(user or self.user).get("/api/dashboard/scan-revision")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertIn("Cookie", response.headers["Vary"])
+        self.assertEqual(set(response.json), {"revision"})
+        return response.json["revision"]
+
+    def test_revision_changes_on_completed_job_or_new_snapshot_but_not_pending_job(self):
+        original = self.revision()
+        self.assertEqual(self.get("?date=recent")["revision"], original)
+        self.snapshot(-6, protected("100"))
+        snapshot_token = self.revision()
+        self.assertNotEqual(snapshot_token, original)
+        job = ScanJob(target_id=self.target.id, steamid=self.target.steamid, status="running")
+        db.session.add(job)
+        db.session.commit()
+        self.assertEqual(self.revision(), snapshot_token)
+        job.status, job.finished_at = "completed", NOW
+        job.result_json = json.dumps({"protected_signal": {"scanned_at": NOW.astimezone(
+            timezone(timedelta(hours=8))).isoformat(), "baseline_at": None, "items": []}})
+        db.session.commit()
+        done = self.revision()
+        self.assertNotEqual(done, snapshot_token)
+        self.assertEqual(done, self.get()["revision"])
+        self.assertEqual(self.revision(), done)
+
+    def test_revision_scope_entitlement_and_subscription_changes(self):
+        route = "/api/dashboard/scan-revision"
+        self.assertEqual(self.app.test_client().get(route).status_code, 401)
+        self.assertEqual(self.client(self.user).get(route+"?scope=all").status_code, 403)
+        self.assertEqual(self.client(self.other_admin).get(route+"?scope=all").status_code, 403)
+        original = self.revision()
+        foreign = self.revision(self.other_admin)
+        self.snapshot(-4, protected("101"))
+        self.assertEqual(self.revision(self.other_admin), foreign)
+        sub = Subscription.query.filter_by(user_id=self.user.id, target_id=self.target.id).one()
+        before_rename = self.revision()
+        sub.remark = "现在的备注"
+        db.session.commit()
+        self.assertNotEqual(self.revision(), before_rename)
+        db.session.delete(sub)
+        db.session.commit()
+        self.assertNotEqual(self.revision(), original)
+        self.assertEqual(self.revision(self.other_admin), foreign)
+
+    def test_revision_freezes_at_grace_cutoff_and_skips_asset_payloads(self):
+        from sqlalchemy import event
+
+        self.user.activation_expires_at = NOW-timedelta(hours=8)
+        db.session.commit()
+        with patch("cs2_inventory.protected_feed.entitlement_state", return_value="grace"):
+            first = self.revision()
+            self.snapshot(-1, protected("100"))
+            self.assertEqual(self.revision(), first)
+            self.assertEqual(self.get()["revision"], first)
+
+        sql = []
+        def capture(conn, cursor, statement, params, context, many):
+            sql.append(statement.lower())
+
+        event.listen(db.engine, "before_cursor_execute", capture)
+        try:
+            self.revision()
+        finally:
+            event.remove(db.engine, "before_cursor_execute", capture)
+        self.assertFalse(any(key in " ".join(sql) for key in ("snapshot_items", "payload_gzip", "scan_jobs.result_json")))
+        with patch("cs2_inventory.protected_feed.entitlement_state", return_value="expired"):
+            self.assertEqual(self.client(self.user).get("/api/dashboard/scan-revision").status_code,403)
+
     def test_missing_baseline_and_zero_are_distinct(self):
         self.assertEqual(self.get()["summary"]["observed_accounts"], 0)
         self.assertIsNone(self.get()["summary"]["added_units"])
@@ -57,6 +127,43 @@ class ProtectedFeedTests(unittest.TestCase):
         self.assertIsNone(self.get()["summary"]["added_units"])
         self.snapshot(-1, protected())
         self.assertEqual(self.get()["summary"]["added_units"], 0)
+
+    def test_target_choices_survive_missing_baseline_zero_and_additions(self):
+        tid = self.target.id
+        sub = Subscription.query.filter_by(user_id=self.user.id, target_id=tid).one()
+        sub.remark = "自选目标甲"
+        db.session.commit()
+
+        def choice():
+            return next(row for row in self.get()["targets"] if row["target_id"] == tid)
+
+        self.assertEqual(choice(), {
+            "target_id": tid, "label": "自选目标甲", "scanned_at": None, "baseline_at": None,
+        })
+        self.snapshot(-8, protected("101"))
+        self.assertIsNotNone(choice()["scanned_at"])
+        self.assertIsNone(choice()["baseline_at"])
+        self.snapshot(-4, protected("101"))
+        zero = choice()
+        self.assertIsNotNone(zero["baseline_at"])
+        self.assertEqual(self.get()["items"], [])
+        self.snapshot(-1, protected("101") + protected("102"))
+        self.assertEqual(choice()["baseline_at"], zero["scanned_at"])
+        self.assertEqual(self.get()["items"][0]["accounts"][0]["count"], 1)
+
+    def test_target_choices_follow_scope_without_leaking_other_users_remarks(self):
+        other = SteamTarget(steamid="76561198000012345", persona_name="其他范围的账号")
+        db.session.add(other)
+        db.session.flush()
+        db.session.add(Subscription(user_id=self.other_admin.id, target_id=other.id, remark="私人备注乙"))
+        db.session.commit()
+        mine = self.get("?slot=14")["targets"]
+        self.assertIn(self.target.id, {row["target_id"] for row in mine})
+        self.assertNotIn(other.id, {row["target_id"] for row in mine})
+        other_user = self.get("?slot=14", user=self.other_admin)["targets"]
+        self.assertEqual([(a["target_id"], a["label"]) for a in other_user], [(other.id, "私人备注乙")])
+        all_targets = self.get("?scope=all", user=self.admin)["targets"]
+        self.assertEqual(next(a["label"] for a in all_targets if a["target_id"] == other.id), "其他范围的账号")
 
     def test_arrivals_are_not_net_holdings_or_status_changes(self):
         self.snapshot(-20, protected("110"))  # 曾出现的资产 110 再次回来
@@ -78,6 +185,14 @@ class ProtectedFeedTests(unittest.TestCase):
         account = data["items"][0]["accounts"][0]
         self.assertEqual((account["target_id"], account["count"]), (self.target.id, 3))
         self.assertNotIn("key", data["items"][0])
+
+    def test_search_exposes_market_name_alongside_localized_name(self):
+        self.snapshot(-8, protected("100"))
+        self.snapshot(-1, protected("100")+protected("103"))
+        item=self.get()["items"][0]
+        self.assertEqual(item["name"], "测试皮肤")
+        self.assertEqual(item["market_name"], "AK-47 | Test")
+        self.assertNotIn("key", item)
 
     def test_progress_rows_from_one_scan_never_form_a_comparison(self):
         self.snapshot(-15, protected("100"), round_id=111)
@@ -143,6 +258,53 @@ class ProtectedFeedTests(unittest.TestCase):
         self.assertIsNone(
             self.get("?date=2026-11-18&slot=14")["summary"]["added_units"]
         )
+
+    def test_recent_day_accepts_zero_and_ignores_older_targets(self):
+        a_id = self.target.id
+        self.snapshot(-46, protected("101"))
+        self.job(-26, "R5", protected("102"))
+        # 另一个目标今天有有效的零新增结果；不把甲昨天的新增加进来。
+        self.target = SteamTarget(steamid="76561198000000002", persona_name="乙")
+        db.session.add(self.target)
+        db.session.flush()
+        db.session.add(Subscription(user_id=self.user.id, target_id=self.target.id))
+        db.session.commit()
+        self.snapshot(-10, protected("103"))
+        self.job(-1, "R3", protected("103"))
+        payload = self.get("?date=recent")
+        self.assertEqual(payload["date"], "2026-11-19")
+        self.assertEqual(payload["summary"]["added_units"], 0)
+        self.assertEqual(payload["summary"]["observed_accounts"], 1)
+        self.assertIsNone(next(a for a in payload["targets"] if a["target_id"] == a_id)["scanned_at"])
+
+    def test_recent_day_handles_no_data_first_record_and_mixed_storage(self):
+        self.assertEqual(self.get("?date=recent")["date"], "2026-11-19")
+        self.job(-25, "R5", protected("101"))
+        # 只有首次记录也应选中前一天。
+        first = self.get("?date=recent")
+        self.assertEqual(first["date"], "2026-11-18")
+        self.assertIsNone(first["summary"]["added_units"])
+        self.snapshot(-1, protected("105"))
+        data = self.get("?date=recent")
+        self.assertEqual(data["date"], "2026-11-19")
+        self.assertEqual(data["summary"]["added_units"], 1)
+        self.assertEqual(self.get("?date=2026-11-18")["date"], "2026-11-18")
+
+    def test_recent_day_uses_visible_retained_results_and_grace_cutoff(self):
+        self.job(-26, "R5", protected("100"))
+        self.job(-3, "R2", protected("101"))
+        self.assertEqual(self.get("?date=recent",user=self.other_admin)["summary"]["observed_accounts"],0)
+        self.user.activation_expires_at = NOW - timedelta(hours=15)
+        db.session.commit()
+        with patch("cs2_inventory.protected_feed.entitlement_state", return_value="grace"):
+            visible = self.get("?date=recent")
+            self.assertEqual(visible["date"], "2026-11-18")
+            self.assertEqual(visible["summary"]["observed_accounts"], 1)
+        with patch("cs2_inventory.protected_feed.utcnow", return_value=NOW+timedelta(days=9)):
+            payload = self.get("?date=recent")
+            self.assertEqual(payload["date"], "2026-11-28")
+            self.assertEqual(payload["summary"]["observed_accounts"], 0)
+        self.assertEqual(self.client(self.user).get(ROUTE+"?date=recent&slot=07").status_code, 400)
 
     def test_regular_admin_and_grace_access(self):
         self.snapshot(-24, protected("100"))
