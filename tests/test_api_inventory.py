@@ -28,6 +28,7 @@ from cs2_inventory.models import (
 from cs2_inventory.services import prune_expired, snapshot_diff, store_snapshot
 from cs2_inventory.unified import unify_inventory
 from cs2_inventory.worker import process_job
+from tests.session_fixture import sign_in_fixture
 
 LIVE = {"steamwebapi-cache": "no"}
 
@@ -165,8 +166,7 @@ class ApiInventoryTests(unittest.TestCase):
 
     def client(self, user):
         client = self.app.test_client()
-        with client.session_transaction() as session:
-            session["user_id"] = user.id
+        sign_in_fixture(client, user)
         return client
 
     def assert_business(self, value):

@@ -6,17 +6,21 @@
     <a data-workspace="admin" class="hidden" href="{{ url_for('application', view='admin') }}">管理后台</a>
   </nav>
   <details class="account-menu" id="accountMenu"><summary><span id="navUsername">账号</span><span aria-hidden="true">⌄</span></summary><div class="account-menu-body">
+    <section id="savedAccountSection" class="saved-account-section" aria-labelledby="savedAccountTitle" hidden>
+      <h2 id="savedAccountTitle">切换账号</h2>
+      <div id="savedAccounts"></div>
+    </section>
+    <button type="button" id="navSwitch" aria-haspopup="dialog">添加账号</button>
     <label class="theme-picker"><span>主题</span><select data-theme-selector aria-label="选择主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
-    <button type="button" id="navSwitch" aria-haspopup="dialog">切换账号</button>
     <button type="button" id="navPassword">修改密码</button>
     <a id="homeLink" href="{{ url_for('index') }}">平台介绍</a>
-    <button type="button" id="navLogout">退出登录</button>
+    <button type="button" id="navLogout">退出此浏览器的全部账号</button>
     <p id="navError" role="alert"></p>
   </div></details>
 </header>
 <dialog id="switchAccountDialog" aria-labelledby="switchAccountTitle">
   <form id="switchAccountForm" class="dialog-body">
-    <h3 id="switchAccountTitle">切换账号</h3>
+    <h3 id="switchAccountTitle">添加账号</h3>
     <p class="account-current">当前账号 · <span id="switchCurrentUser"></span></p>
     <label for="switchUsername">要登录的账号</label>
     <input id="switchUsername" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>

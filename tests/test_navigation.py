@@ -42,7 +42,9 @@ class NavigationTests(unittest.TestCase):
             soup = self.soup(path)
             self.assertIsNotNone(soup.select_one('#accountMenu #homeLink'))
             self.assertIsNotNone(soup.select_one('#accountMenu #navPassword'))
-            self.assertIsNotNone(soup.select_one('#accountMenu #navSwitch'))
+            self.assertEqual(soup.select_one('#accountMenu #navSwitch').get_text(strip=True), '添加账号')
+            self.assertIsNotNone(soup.select_one('#accountMenu #savedAccountSection[hidden] #savedAccounts'))
+            self.assertIn('全部账号', soup.select_one('#navLogout').get_text(strip=True))
             self.assertEqual(soup.select_one('#switchAccountDialog #switchPassword')['type'], 'password')
             self.assertIsNone(soup.select_one('.workspace-nav button'))
             for name in ('selfOldPassword', 'selfNewPassword', 'selfConfirmPassword'):

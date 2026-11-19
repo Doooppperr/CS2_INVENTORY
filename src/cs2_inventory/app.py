@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from datetime import datetime, time, timedelta, timezone
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, abort, jsonify, render_template, request
 from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
+from . import account_sessions
 from .auth import (
     USERNAME_RE,
     admin_required,
@@ -197,18 +198,40 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         user = User.query.filter(func.lower(User.username) == username.lower()).first()
         if not user or not user.is_active or not check_password_hash(user.password_hash, password):
             return jsonify({"error": "用户名或密码错误"}), 401
-        session.clear()
-        session.permanent = True
-        session["user_id"] = user.id
-        user.last_login_at = utcnow()
-        db.session.commit()
+        account_sessions.password_login(user)
         return jsonify({"user": user_json(user), "csrf_token": csrf_token()})
 
     @app.post("/api/auth/logout")
     @login_required
     def logout(_user):
         require_csrf()
-        session.clear()
+        account_sessions.sign_out()
+        return jsonify({"ok": True})
+
+    @app.get("/api/auth/accounts")
+    @login_required
+    def accounts(user):
+        return jsonify({"accounts": account_sessions.account_list(user), "current_id": user.id})
+
+    def requested_account_id():
+        data = request.get_json(silent=True)
+        value = data.get("user_id") if isinstance(data, dict) else None
+        if type(value) is not int:
+            abort(400, description="请选择账号")
+        return value
+
+    @app.post("/api/auth/switch")
+    @login_required
+    def switch_account(_user):
+        require_csrf()
+        user = account_sessions.switch_account(requested_account_id())
+        return jsonify({"user": user_json(user), "csrf_token": csrf_token()})
+
+    @app.post("/api/auth/accounts/forget")
+    @login_required
+    def forget_account(user):
+        require_csrf()
+        account_sessions.forget(user, requested_account_id())
         return jsonify({"ok": True})
 
     @app.post("/api/auth/password")
@@ -226,7 +249,7 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         if len(new_password) < 8 or len(new_password) > 72:
             return jsonify({"error": "新密码长度必须为 8-72"}), 400
         set_user_password(user, new_password)
-        db.session.commit()
+        account_sessions.retain_after_password_change(user)
         return jsonify({"ok": True})
 
     @app.post("/api/activation/redeem")

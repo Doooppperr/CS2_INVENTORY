@@ -70,7 +70,26 @@ def run(channel):
                     tab.locator('[data-workspace="monitors"]').click()
                     expect(tab.locator('#monitorList')).to_contain_text('beta的目标')
                     expect(tab.locator('#monitorList')).not_to_contain_text('alpha的目标')
+                # 两个账号均验证过后，来回切换只点账号名，不再提交密码。
+                logins=[]
+                switches=[]
+                first.on('request',lambda req: logins.append(req.method) if req.url.endswith('/api/auth/login') else None)
+                first.on('request',lambda req: switches.append(req.method) if req.url.endswith('/api/auth/switch') else None)
+                for name in ('alpha','beta','alpha'):
+                    first.locator('#accountMenu summary').click()
+                    first.locator('#savedAccounts [data-switch-user]').filter(has_text=name).click()
+                    for tab in (first,second):
+                        expect(tab.locator('#navUsername')).to_have_text(name)
+                    expect(first.locator('#switchAccountDialog')).to_be_hidden()
+                    own=context.request.get(home+'/api/monitors').json()['items']
+                    self_labels=[item['persona_name'] for item in own]
+                    assert self_labels==[name+'的目标']
+                assert logins==[] and switches==['POST']*3
                 first.locator('#accountMenu summary').click()
+                first.locator('#savedAccounts [data-forget-user]').click()
+                expect(first.locator('#savedAccounts [data-switch-user]')).to_have_count(0)
+                remaining=context.request.get(home+'/api/auth/accounts').json()['accounts']
+                assert all(u['username']!='beta' for u in remaining)
                 first.locator('#navLogout').click()
                 for tab in (first, second):
                     expect(tab).to_have_url(home + '/?auth=login')
@@ -82,7 +101,7 @@ def run(channel):
             with app.app_context():
                 db.session.remove()
                 db.engine.dispose()
-    print('ACCOUNT SWITCH: wrong password / cancel / mobile login / two tabs / scoped inventory / logout = PASS')
+    print('ACCOUNT SWITCH: wrong password / cancel / mobile login / two tabs / scoped inventory / three one-click switches with 0 password submissions / forget / logout = PASS')
 
 
 if __name__ == '__main__':

@@ -71,6 +71,8 @@ class ProtectedGrowthBrowserTests(unittest.TestCase):
             data = {'csrf_token': 'test', 'user': {'id': self.user_id, 'username': '测试账号',
                     'role': 'admin', 'can_query_inventory': True,
                     'can_view_inventory_diagnostics': False, 'entitlement': entitlement}}
+        elif path == '/api/auth/accounts':
+            data = {'current_id': self.user_id, 'accounts': [{'id': self.user_id, 'username': '测试账号'}]}
         elif path in ['/api/monitors', '/api/admin/targets']:
             data = {'page': int(parse_qs(url.query).get('page', ['1'])[0]), 'pages': 3,
                     'total': 90, 'items': items, 'entitlement': entitlement}

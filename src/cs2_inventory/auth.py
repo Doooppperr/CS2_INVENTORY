@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 
 from flask import abort, current_app, jsonify, request, session
 
-from .database import db
+from .account_sessions import authenticated_user
 from .models import User, beijing_iso
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
@@ -27,7 +27,7 @@ def csrf_token() -> str:
 
 def require_csrf() -> None:
     supplied = request.headers.get("X-CSRF-Token", "")
-    if not secrets.compare_digest(supplied, str(session.get("csrf_token") or "")):
+    if not supplied or not supplied.isascii() or not secrets.compare_digest(supplied, session.get("csrf_token") or ""):
         abort(400, description="CSRF 校验失败")
 
 
@@ -46,14 +46,7 @@ def rate_limited(key: str, *, limit: int, window_seconds: int) -> bool:
 
 
 def current_user() -> User | None:
-    user_id = session.get("user_id")
-    if not user_id:
-        return None
-    user = db.session.get(User, int(user_id))
-    if not user or not user.is_active:
-        session.clear()
-        return None
-    return user
+    return authenticated_user()
 
 
 def login_required(view):

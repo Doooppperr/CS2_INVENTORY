@@ -26,3 +26,13 @@
 #switchAccountForm h3{margin:0;font-size:20px}#switchAccountForm .account-current{margin:5px 0 18px;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
 #switchAccountForm input{width:100%;border:1px solid var(--row-border);border-radius:6px;min-height:42px;box-shadow:none}#switchAccountForm button{min-height:40px;border-radius:8px;box-shadow:none}
 #switchAccountForm input:focus-visible{outline:2px solid var(--focus);outline-offset:1px}#switchAccountMessage{color:var(--red);font-size:13px}#switchAccountMessage:empty{display:none}
+
+.account-menu-body{width:min(264px,calc(100vw - 28px));max-height:min(68vh,520px);overflow-y:auto}
+.saved-account-section{border-bottom:1px solid var(--row-border);padding-bottom:5px}
+.saved-account-section[hidden]{display:none}
+.saved-account-section h2{margin:2px 10px 6px;font:600 12px/1.4 "Segoe UI","Microsoft YaHei",sans-serif;color:var(--muted)}
+.saved-account-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px}
+.saved-account-row button{min-height:40px}
+.saved-account-row [data-switch-user]{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.saved-account-row [data-forget-user]{width:auto;color:var(--muted);font-size:12px}
+.account-menu-body button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}

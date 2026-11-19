@@ -5,6 +5,7 @@ from datetime import timedelta
 from cs2_inventory.database import db
 from cs2_inventory.models import Subscription, User
 from tests import test_dashboard as fixtures
+from tests.session_fixture import sign_in_fixture
 
 
 class DashboardAccessTests(unittest.TestCase):
@@ -33,9 +34,7 @@ class DashboardAccessTests(unittest.TestCase):
             self.day_snapshot([str(i) for i in range(amount)], self.today, target)
 
     def login(self, user):
-        with self.client.session_transaction() as session:
-            session.clear()
-            session['user_id'] = user.id
+        sign_in_fixture(self.client, user)
 
     def check_scope(self, target_ids, increase):
         for endpoint in self.endpoints:

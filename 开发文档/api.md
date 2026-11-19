@@ -56,3 +56,10 @@
 默认入口使用 `date=recent&slot=latest`：从有权查看的目标中选择最近有记录的北京时间日期，并回传所选日期；同一个响应不会混入其他日期的记录。显式日期或时段仍按原选择查询。
 `targets` 含可见目标及对应记录/基线时间；`items.market_name`（有独立市场名时）用于饰品搜索。看板汇总按当前筛选计算。
 `GET /api/dashboard/scan-revision?scope=mine|all` 返回不透明的 `revision`，权限和保留期同看板。最新模式的可见页面每五分钟比较它与已读结果；有变化才重读结果。上述接口都不触发实际库存扫描。
+
+## 本浏览器的账号切换
+
+- `GET /api/auth/accounts`：返回当前登录账号 ID 及本浏览器仍有效的账号（仅 ID、用户名）。
+- `POST /api/auth/switch`：传入 `user_id` 切换到已验证且未过期的账号。首次添加账号仍走 `POST /api/auth/login`。
+- `POST /api/auth/accounts/forget`：传入其他账号的 `user_id`，移除其在本浏览器的快捷登录资格，不影响账号和订阅。
+- `POST /api/auth/logout`：退出并清除本次浏览器会话里的全部账号。上述写请求沿用 CSRF 校验。

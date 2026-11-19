@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import update
 
+from .account_sessions import prune_devices
 from .database import db
 from .models import (
     ActivationCode,
@@ -281,6 +282,7 @@ def protected_snapshot_ids(*, now: datetime | None = None) -> set[int]:
 
 def cleanup_lifecycle(*, now: datetime | None = None) -> dict:
     now = aware_utc(now or utcnow())
+    prune_devices(now)
     purged_customers = 0
     removed_subscriptions = 0
     for user in User.query.filter_by(account_kind="customer").all():

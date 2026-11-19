@@ -40,6 +40,7 @@ from cs2_inventory.services import (
 )
 from cs2_inventory.unified import unify_inventory
 from cs2_inventory.worker import process_batch_group, process_job
+from tests.session_fixture import sign_in_fixture
 
 
 class DashboardTests(unittest.TestCase):
@@ -57,8 +58,7 @@ class DashboardTests(unittest.TestCase):
         self.today = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
         self.day = today.isoformat()
         self.client = self.app.test_client()
-        with self.client.session_transaction() as session:
-            session["user_id"] = self.user.id
+        sign_in_fixture(self.client, self.user)
 
     def tearDown(self):
         db.session.remove()
@@ -296,8 +296,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(response.get_json()["items"], [])
         self.assertIn("no-store", response.headers["Cache-Control"])
         self.assertEqual(self.client.get("/api/dashboard?scope=all").status_code, 403)
-        with self.client.session_transaction() as session:
-            session["user_id"] = self.admin.id
+        sign_in_fixture(self.client, self.admin)
         self.assertEqual(self.client.get("/api/dashboard?scope=all").get_json()["items"][0]["increase"], 1)
         with self.client.session_transaction() as session:
             session.clear()

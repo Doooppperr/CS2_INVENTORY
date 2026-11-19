@@ -29,6 +29,7 @@ from cs2_inventory.services import (
 )
 from cs2_inventory.unified import unify_inventory
 from cs2_inventory.worker import estimate_inventory_credits, process_batch_group
+from tests.session_fixture import sign_in_fixture
 
 
 class ScanStatusRecoveryTests(unittest.TestCase):
@@ -192,8 +193,7 @@ class ScanStatusRecoveryTests(unittest.TestCase):
         store_snapshot(target, unify_inventory(result))
         db.session.commit()
         client = self.app.test_client()
-        with client.session_transaction() as session:
-            session["user_id"] = user.id
+        sign_in_fixture(client, user)
         for endpoint in ("/api/admin/targets", "/api/monitors"):
             response = client.get(endpoint)
             self.assertEqual(response.status_code, 200)
