@@ -34,7 +34,7 @@
   }
   function bind({onSearch,initial,onUserSearch,userInitial,onTask,onDraft,onRetry}) {
     const byId=id=>document.getElementById(id);
-    bindFilter('adminTarget',initial,onSearch,q=>onDraft('target',q));
+    const setTargetSearch=bindFilter('adminTarget',initial,onSearch,q=>onDraft('target',q));
     const setUserSearch=bindFilter('adminUser',userInitial,onUserSearch,q=>onDraft('user',q));
     const lists=Object.fromEntries([['target','adminTarget','adminTargets'],['user','adminUser','users']].map(([key,prefix,id])=>{
       const retry=byId(prefix+'Retry');retry.onclick=()=>onRetry(key);
@@ -88,9 +88,9 @@
     };
     function showCode(code){
       text.textContent=code;feedback.textContent='';
-      document.getElementById('issuedCodePanel').hidden=false;
+      document.getElementById('issuedCodePanel').hidden=!code;
     }
-    return {setUserSearch,showTask,showCode,listState};
+    return {setUserSearch,setTargetSearch,showTask,showCode,listState};
   }
   window.AdminWorkspace={bind,labelRows};
 })();

@@ -1,0 +1,14 @@
+<section id="queryView" class="panel hidden" aria-labelledby="instantQueryHeading">
+  <header class="instant-heading"><div><h2 id="instantQueryHeading" class="detail-sr-title">实时库存查询</h2><p>按目标查询交易保护和其他可见库存。</p></div><a class="instant-history" href="{{ url_for('application', view='queryHistory') }}">查询历史</a></header>
+  <form id="instantQueryForm">
+    <label for="adminSteamid">查询目标</label>
+    <p class="meta" id="instantHelp">每行一个 SteamID64 或 Steam 个人主页数字链接，后面可加备注；每批最多 20 个不同目标。</p>
+    <textarea id="adminSteamid" rows="4" spellcheck="false" autocomplete="off" autocapitalize="none" aria-describedby="instantHelp instantProblems" aria-keyshortcuts="Control+Enter Meta+Enter" placeholder="76561198000000000 收藏账号"></textarea>
+    <div id="instantProblems" class="instant-problems" role="status" hidden></div>
+    <p id="queryEstimate" class="meta" aria-live="polite"></p>
+    <details id="instantPreview" hidden><summary id="instantPreviewLabel">核对目标</summary><ol id="instantPreviewList"></ol></details>
+    <div class="instant-submit"><button id="adminQuery" disabled type="submit">开始查询</button><span class="meta">Ctrl / ⌘ + Enter 提交</span></div>
+    <p id="instantStatus" role="status"></p>
+  </form>
+  <section id="instantResults" hidden><h3 id="instantResultsTitle" tabindex="-1">本批结果</h3><div id="adminQueryResult"></div></section>
+</section>

@@ -1,0 +1,26 @@
+.operations-overview{display:grid;gap:12px;min-width:0;color:var(--text)}
+.operations-overview [hidden]{display:none}
+.ops-heading,.ops-actions,.ops-service{display:flex;align-items:center;justify-content:space-between;gap:8px 14px;flex-wrap:wrap}
+.ops-heading h2,.ops-heading h3,.ops-feedback p,.ops-times,.ops-service{margin:0}
+.ops-heading h2{font-size:20px}.ops-heading h3{font-size:18px}.ops-heading>span,.ops-times,.ops-service{color:var(--muted);font-size:13px}
+.ops-batch{padding:clamp(14px,2.5vw,24px);border:1px solid var(--row-border);border-radius:12px;background:var(--panel)}
+.ops-state{padding:3px 9px;border-radius:6px;background:var(--panel2);color:var(--text);font-size:13px}
+.ops-state[data-state=completed],.ops-state[data-state=running]{background:var(--active);color:var(--blue)}
+.ops-state[data-state=completed_with_errors],.ops-state[data-state=failed]{background:var(--protected-start);color:var(--protected-text)}
+.ops-times{margin-top:6px;line-height:1.6;overflow-wrap:anywhere}
+.batch-totals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:16px 0 12px;gap:7px}
+.batch-totals>div{display:grid;gap:4px;padding:8px 10px;border-left:2px solid var(--row-border)}
+.batch-totals dt{font-size:12px;color:var(--muted);line-height:1.25}.batch-totals dd{margin:0;font-size:clamp(19px,2.2vw,26px);font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums}
+.batch-totals .has-failures{border-color:var(--protected-border)}.has-failures dd{color:var(--protected-text)}
+.ops-actions{justify-content:flex-start;margin-top:9px}
+.ops-actions a,.ops-service a{display:inline-flex;min-height:44px;align-items:center;gap:5px;font-size:14px;font-weight:650;color:var(--blue);text-underline-offset:3px}
+.ops-actions #batchFailures{padding:7px 11px;border-radius:7px;background:var(--protected-start);color:var(--protected-text);text-decoration:none}
+.ops-actions #batchFailures:hover{text-decoration:underline}
+.ops-service{justify-content:flex-start;padding:10px 0;gap:3px 20px}.ops-service b{color:var(--text);font-weight:650}
+.ops-feedback{display:flex;align-items:center;gap:12px;padding:8px 0}.ops-feedback button{min-height:44px}
+.ops-diagnostics{padding:0 12px;border:1px solid var(--row-border);border-radius:8px;background:var(--panel2)}
+.ops-diagnostics summary{min-height:44px;align-content:center;cursor:pointer;font-weight:650}
+.ops-diagnostics summary span{margin-left:8px;color:var(--protected-text);font-size:13px}
+.ops-diagnostics dl{margin:0 0 10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px 18px}
+.ops-diagnostics dl>div{padding:6px 0;border-top:1px solid var(--row-border)}.ops-diagnostics dt{color:var(--muted);font-size:13px}.ops-diagnostics dd{margin:2px 0;color:var(--text);font-size:14px}
+@media(max-width:480px){.ops-heading h2{font-size:18px}.ops-batch{padding:12px}.batch-totals{gap:2px}.batch-totals>div{padding:4px 5px}.ops-actions{gap:5px 12px}.ops-service{display:grid;gap:3px}}

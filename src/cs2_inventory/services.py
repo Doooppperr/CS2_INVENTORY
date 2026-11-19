@@ -151,6 +151,13 @@ def _datetime_sort_key(value: datetime) -> float:
 def target_public(target: SteamTarget, *, include_latest: bool = True, user=None) -> dict:
     from .inventory_views import inventory_view
     snapshot = latest_snapshot(target.id) if include_latest else None
+    result = target_card_fields(target, snapshot, len(target.subscriptions))
+    if user:
+        result.update(inventory_view(target.id, user, include_items=False))
+    return result
+
+
+def target_card_fields(target, snapshot, subscriber_count):
     return {
         "id": target.id,
         "updating": target.scan_status in {"queued", "running", "scanning"},
@@ -163,8 +170,7 @@ def target_public(target: SteamTarget, *, include_latest: bool = True, user=None
         "last_success_at": beijing_iso(target.last_success_at),
         "last_error": target.last_error,
         "latest": snapshot_public(snapshot, include_items=False) if snapshot else None,
-        "subscriber_count": len(target.subscriptions),
-        **(inventory_view(target.id, user, include_items=False) if user else {}),
+        "subscriber_count": subscriber_count,
     }
 
 

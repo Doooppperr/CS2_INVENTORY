@@ -1,0 +1,23 @@
+<div id="adminStatus" class="operations-overview" aria-busy="true">
+  <div class="ops-heading"><h2 class="detail-sr-title">运行概况</h2><span>北京时间</span></div>
+  <div id="overviewFeedback" class="ops-feedback"><p id="overviewMessage" role="status">正在读取运行概况…</p><button id="overviewRetry" class="ghost" type="button" hidden>重新读取</button></div>
+  <div id="overviewResults" hidden>
+    <section class="ops-batch" aria-labelledby="batchHeading">
+      <div class="ops-heading"><h3 tabindex="-1" id="batchHeading">最近一次定时扫描</h3><strong id="batchState" class="ops-state"></strong></div>
+      <p id="batchTimes" class="ops-times"></p>
+      <dl id="batchTotals" class="batch-totals">
+        <div><dt>目标数</dt><dd id="batchTotal"></dd></div>
+        <div><dt>成功</dt><dd id="batchCompleted"></dd></div>
+        <div><dt>失败</dt><dd id="batchFailed"></dd></div>
+        <div><dt>待完成</dt><dd id="batchPending"></dd></div>
+      </dl>
+      <p id="batchUnfinished" class="ops-times" hidden></p>
+      <div class="ops-actions"><a id="batchFailures" hidden>查看本轮失败目标</a><a id="overviewTargets" href="{{ url_for('application', view='admin', section='targets') }}">查看全部监控</a></div>
+    </section>
+    <div class="ops-service"><span>定时扫描 <b id="overviewSchedule"></b></span><span>平台目标 <b id="overviewTargetCount"></b></span><span id="overviewQueueSummary">排队或执行中 <b id="overviewQueue"></b></span><a href="{{ url_for('application', view='admin', section='users', user_task='codes') }}">未使用续期码 <b id="overviewCodes"></b></a></div>
+    <details id="overviewDiagnostics" class="ops-diagnostics" hidden>
+      <summary>额度与运行详情 <span id="quotaState"></span></summary>
+      <dl id="overviewMetrics"></dl>
+    </details>
+  </div>
+</div>

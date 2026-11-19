@@ -1,11 +1,11 @@
 const T={private:"已私密",partial:"待核验",login:'\u767b\u5f55',ready:'\u5c31\u7eea',queued:'\u6392\u961f\u4e2d',running:'\u626b\u63cf\u4e2d',failed:'\u5931\u8d25',pending:'\u7b49\u5f85\u626b\u63cf',unknown:'\u672a\u77e5'};
 const params=new URLSearchParams(location.search),positiveInt=(value,fallback=1)=>{const parsed=Number.parseInt(value,10);return Number.isInteger(parsed)&&parsed>0?parsed:fallback},validAdminSection=value=>['overview','users','targets'].includes(value)?value:'overview';
 const queryRecordId=value=>Number.isSafeInteger(Number(value)) && Number(value)>0?Number(value):0;
-const state={historyJob:queryRecordId(params.get('job')),historyFocus:queryRecordId(params.get('focus_job')),csrf:'',user:null,page:positiveInt(params.get('page')),pages:1,currentView:'monitors',currentTarget:null,detail:null,comparison:null,detailSource:['admin','dashboard'].includes(params.get('source'))?params.get('source'):'monitors',queryHistoryPage:positiveInt(params.get('query_page')),adminSection:validAdminSection(params.get('section')),adminUserPage:positiveInt(params.get('user_page')),adminUserPages:1,adminUserQuery:params.get('user_q')||'',adminUserTask:['create','codes'].includes(params.get('user_task'))?params.get('user_task'):'list',adminTargetPage:positiveInt(params.get('target_page')),adminTargetPages:1,adminTargetQuery:params.get('target_q')||'',resetUserId:null,remarkTargetId:null};
+const state={historyJob:queryRecordId(params.get('job')),historyFocus:queryRecordId(params.get('focus_job')),csrf:'',user:null,page:positiveInt(params.get('page')),pages:1,currentView:'monitors',currentTarget:null,detail:null,comparison:null,detailSource:['admin','dashboard'].includes(params.get('source'))?params.get('source'):'monitors',queryHistoryPage:positiveInt(params.get('query_page')),adminSection:validAdminSection(params.get('section')),adminUserPage:positiveInt(params.get('user_page')),adminUserPages:1,adminUserQuery:params.get('user_q')||'',adminUserState:params.get('user_state')||'',adminUserTask:['create','codes'].includes(params.get('user_task'))?params.get('user_task'):'list',adminTargetPage:positiveInt(params.get('target_page')),adminTargetPages:1,adminTargetQuery:params.get('target_q')||'',adminOrder:['recent_scan','subscribers'].includes(params.get('order'))?params.get('order'):'newest',adminFailedBatch:params.get('failed_batch'),adminSubscriber:params.get('subscriber_id'),resetUserId:null,remarkTargetId:null};
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const detailMatch=location.pathname.match(/\/(?:app\/)?monitors\/(\d+)\/?$/);let basePath=location.pathname.replace(/(?:app\/)?monitors\/\d+\/?$/,'').replace(/app\/?$/,'');if(!basePath.endsWith('/'))basePath+='/';const appUrl=path=>basePath+String(path).replace(/^\//,''),consoleUrl=path=>{const value=String(path||'').replace(/^\//,'');return appUrl(value.startsWith('?')?`app${value}`:`app/${value}`)};
 async function api(path,options={}){options.headers={...(options.headers||{}),'X-CSRF-Token':state.csrf};if(options.body&&!options.headers['Content-Type'])options.headers['Content-Type']='application/json';const r=await fetch(appUrl(path),options);const d=await r.json().catch(()=>({error:'\u54cd\u5e94\u683c\u5f0f\u9519\u8bef'}));if(!r.ok)throw Object.assign(new Error(d.error||`\u8bf7\u6c42\u5931\u8d25 ${r.status}`),{status:r.status});return d}
 function fmt(v){return v?new Date(v).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'--'}function statusText(s){return T[s]||s||T.unknown}function toast(text,ok=true){const e=$('toast');e.textContent=text;e.className=`toast ${ok?'ok':'bad'}`;clearTimeout(toast.timer);toast.timer=setTimeout(()=>e.classList.add('hidden'),3200)}function msg(text,ok=false){$('message').className=ok?'success':'error';$('message').textContent=text||''}async function busy(b,text,fn){const old=b.textContent;b.disabled=true;b.textContent=text;try{return await fn()}finally{b.disabled=false;b.textContent=old}}
-function rootStateUrl(view=state.currentView){const next=new URLSearchParams();next.set('view',view);if(['monitors','subscriptions'].includes(view)){next.set('page',String(state.page));const q=$('monitorSearch').value;if(q)next.set('q',q);}else if(view==='queryHistory'){return historyUrl(state.queryHistoryPage,state.historyJob,state.historyFocus);}else{next.set('section',state.adminSection);if(state.adminSection==='users'){if(state.adminUserTask!=='list')next.set('user_task',state.adminUserTask);if(state.adminUserQuery)next.set('user_q',state.adminUserQuery);next.set('user_page',String(state.adminUserPage))}if(state.adminSection==='targets'){next.set('target_page',String(state.adminTargetPage));if(state.adminTargetQuery)next.set('target_q',state.adminTargetQuery)}}return consoleUrl(`?${next}`)}function syncRootUrl(){
+function rootStateUrl(view=state.currentView){const next=new URLSearchParams();next.set('view',view);if(['monitors','subscriptions'].includes(view)){next.set('page',String(state.page));const q=$('monitorSearch').value;if(q)next.set('q',q);}else if(view==='queryHistory'){return historyUrl(state.queryHistoryPage,state.historyJob,state.historyFocus);}else{next.set('section',state.adminSection);if(state.adminSection==='users'){if(state.adminUserTask!=='list')next.set('user_task',state.adminUserTask);if(state.adminUserTask==='codes')codeHistory.urlFields(next);if(state.adminUserQuery)next.set('user_q',state.adminUserQuery);if(state.adminUserState)next.set('user_state',state.adminUserState);next.set('user_page',String(state.adminUserPage))}if(state.adminSection==='targets'){next.set('target_page',String(state.adminTargetPage));targetScopeFields(next);if(state.adminTargetQuery)next.set('target_q',state.adminTargetQuery)}}return consoleUrl(`?${next}`)}function syncRootUrl(){
  if(detailMatch)return;
  const url=rootStateUrl(),saved=history.state?.inventoryList;
  history.replaceState({...history.state,inventoryList:saved?.url===url?saved:null},'',url);
@@ -27,9 +27,9 @@ function validListReturn(saved){
     !Number.isFinite(saved.x)||saved.x<0||!Number.isFinite(saved.at)||Date.now()-saved.at>30*60*1000)return false;
  try{const url=new URL(saved.url,location.origin);return url.origin===location.origin&&url.pathname===consoleUrl('').replace(/\/$/,'');}catch{return false;}
 }
-function navigateToInventory(path){
+function navigateToInventory(path,focusTarget,growth){
  syncRootUrl();
- const saved={url:rootStateUrl(),x:window.scrollX,y:window.scrollY,userId:state.user.id,at:Date.now()};
+ const saved={url:rootStateUrl(),focusTarget,growth,x:window.scrollX,y:window.scrollY,userId:state.user.id,at:Date.now()};
  history.replaceState({...history.state,inventoryList:saved},'',saved.url);
  const token=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
  try{
@@ -61,19 +61,26 @@ function returnFromInventory(){
  }
  const token=params.get('return'),saved=readListReturn(token);
  if(validListReturn(saved)){location.href=saved.url+'&restore='+encodeURIComponent(token);return;}
- location.href=state.detailSource==='dashboard'?consoleUrl('dashboard'):state.detailSource==='admin'?rootStateUrl('admin'):rootStateUrl('monitors');
+ if(state.detailSource==='admin'){state.adminSection='targets';location.href=rootStateUrl('admin');}
+ else location.href=rootStateUrl('monitors');
 }
 async function restoreListPosition(){
  const saved=pendingListRestore;
  if(validListReturn(saved)&&saved.url===rootStateUrl()){
   // 必须等列表和布局完成；加载期间用户已滚动时不抢夺位置。
   await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-  if(!listRestoreCancelled){window.scrollTo({left:saved.x,top:saved.y,behavior:'instant'});history.replaceState({...history.state,inventoryList:saved},'',saved.url);}
+  let link=Number.isSafeInteger(saved.focusTarget)?$('adminTargets').querySelector('.target-open[data-id="'+saved.focusTarget+'"]'):null;
+  if(!listRestoreCancelled&&link&&saved.growth)link=await AdminTargetGrowth.resume(link.closest('article'),saved.growth)||link;
+  if(!listRestoreCancelled){link?.focus({preventScroll:true});window.scrollTo({left:saved.x,top:saved.y,behavior:'instant'});history.replaceState({...history.state,inventoryList:saved},'',saved.url);}
  }
  if('scrollRestoration' in history)history.scrollRestoration='auto';
 }
 addEventListener('pageshow',event=>{if(event.persisted&&'scrollRestoration' in history)history.scrollRestoration='auto';});
-function showAdminSection(section){state.adminSection=validAdminSection(section);['overview','users','targets'].forEach(name=>{const active=name===state.adminSection;$(`admin${name[0].toUpperCase()+name.slice(1)}Page`).classList.toggle('hidden',!active);const tab=$(`admin${name[0].toUpperCase()+name.slice(1)}Tab`);tab.classList.toggle('active',active);tab.classList.toggle('ghost',!active);if(active)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current')})}
+function adminHeading(){
+ const title={overview:'运行概况',targets:'全部监控',users:{list:'客户与权益',create:'创建客户',codes:'续期码管理'}[state.adminUserTask]}[state.adminSection];
+ $('workspaceTitle').textContent=title;document.title=title+' · 管理后台 · CS2 Inventory';
+}
+function showAdminSection(section){state.adminSection=validAdminSection(section);if(state.currentView==='admin')adminHeading();['overview','users','targets'].forEach(name=>{const active=name===state.adminSection;$(`admin${name[0].toUpperCase()+name.slice(1)}Page`).classList.toggle('hidden',!active);const tab=$(`admin${name[0].toUpperCase()+name.slice(1)}Tab`);tab.classList.toggle('active',active);tab.classList.toggle('ghost',!active);if(active)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current')})}
 function showView(v){
  state.currentView=v;
  $('entitlementPanel').classList.toggle('hidden',!['monitors','subscriptions'].includes(v));
@@ -89,8 +96,10 @@ function showView(v){
  window.WorkspaceNavigation.activate(v==='detail'&&state.detailSource==='dashboard'?'dashboard':inAdmin?'admin':'monitors');
  $('workspaceTitle').classList.toggle('detail-sr-title',['detail','monitors','subscriptions'].includes(v));
  $('workspaceTitle').textContent=v==='detail'?'库存详情':inAdmin?'管理后台':'我的监控';
+ if(v==='query')$('workspaceTitle').textContent='实时库存查询';
+ if(v==='queryHistory')$('workspaceTitle').textContent='查询历史';
  document.title=$('workspaceTitle').textContent+' · CS2 Inventory';
- if(v==='detail')$('backDetail').textContent=state.detailSource==='dashboard'?'← 返回看板':state.detailSource==='admin'?'← 返回管理后台':'← 返回我的监控';
+ if(v==='detail')$('backDetail').textContent=state.detailSource==='dashboard'?'← 返回看板':state.detailSource==='admin'?'← 返回全部监控':'← 返回我的监控';
  for(const [id,view] of [['monitorTab','monitors'],['subscriptionsTab','subscriptions'],['queryTab','query'],['queryHistoryTab','queryHistory']]){
   const active=v===view;$(id).classList.toggle('active',active);$(id).classList.toggle('ghost',!active);
   if(active)$(id).setAttribute('aria-current','page');else $(id).removeAttribute('aria-current');
@@ -104,7 +113,7 @@ async function rootView(v){
  if(v==='admin'&&state.user?.role!=='admin')v='monitors';
  if(['query','queryHistory'].includes(v)&&!state.user?.can_query_inventory)v='monitors';
  showView(v);syncRootUrl();
- if(v==='admin')await loadAdmin();else if(v==='queryHistory')await loadQueryHistory();else if(v!=='query')await loadMonitors();
+ if(v==='admin')await loadAdmin();else if(v==='queryHistory')await loadQueryHistory();else if(v==='query')adminInstant.resume();else await loadMonitors();
 }
 function renderEntitlement(e){if(!e)return;const names={admin:'\u7ba1\u7406\u5458',internal:'\u5185\u90e8\u2014\u6c38\u4e45',monthly:'\u6708\u5ea6',annual:'\u5e74\u5ea6',permanent:'\u6c38\u4e45'};let title=names[e.plan]||names[e.status]||names[e.kind]||e.status,text='';$('entitlementPanel').classList.toggle('readonly-banner',e.status==='grace');if(e.status==='grace'){text=`\u5df2\u4e8e ${fmt(e.expires_at)} \u5230\u671f \u6570\u636e\u5df2\u51bb\u7ed3 \u8bf7\u5728 ${fmt(e.grace_ends_at)} \u524d\u4f7f\u7528\u9080\u8bf7\u7801\u7eed\u671f`}else if(e.status==='expired'){text='\u76d1\u63a7\u6570\u636e\u5df2\u6e05\u7406 \u4f7f\u7528\u9080\u8bf7\u7801\u53ef\u91cd\u65b0\u5f00\u59cb'}else{text=e.monitor_limit==null?`\u5df2\u7528 ${e.monitor_count} / \u65e0\u9650`:`\u5df2\u7528 ${e.monitor_count} / ${e.monitor_limit}${e.expires_at?` \u6709\u6548\u81f3 ${fmt(e.expires_at)}`:''}`}$('entitlementTitle').innerHTML=`<span class="plan-badge">${esc(title)}</span>`;$('entitlementText').textContent=text;$('addMonitor').disabled=!e.can_add_monitor;$('steamid').disabled=!e.can_add_monitor;if(!e.can_add_monitor&&e.add_block_reason)msg(e.add_block_reason);$('activationCard').classList.toggle('hidden',['admin','internal','active_permanent'].includes(e.status));if(['grace','expired'].includes(e.status))$('activationCard').open=true}
 async function boot(){const d=await api('api/bootstrap');state.csrf=d.csrf_token;state.user=d.user;$('maintenance').classList.toggle('hidden',!d.maintenance);$('maintenance').textContent=d.maintenance_message;if(!state.user){location.href=appUrl(`?auth=login&next=${encodeURIComponent(location.pathname+location.search)}`);return}$('auth').classList.add('hidden');$('app').classList.remove('hidden');window.WorkspaceNavigation.init({user:state.user,csrf:state.csrf,active:'monitors'});renderEntitlement(state.user.entitlement);if(detailMatch){showView('detail');await openDetail(Number(detailMatch[1]));return}if(!params.has('view')&&location.hash!=='#admin'){location.replace(consoleUrl('dashboard'));return}const requested=params.get('view')||(location.hash==='#admin'?'admin':'monitors');$('monitorSearch').value=params.get('q')||'';await rootView(requested);await restoreListPosition()}
@@ -152,16 +161,17 @@ async function openDetail(id){
   if(first){$('detailTitle').textContent='当前库存';$('detailFeedback').hidden=false;$('detailNotice').textContent='正在读取库存…';}
   $('retryDetail').disabled=true;
   let d;
-  try{d=await api(`api/monitors/${id}`);}
+  try{d=await api(`api/monitors/${id}${state.detailSource==='admin'?'?'+new URLSearchParams(state.adminSubscriber===null?{source:'admin'}:{source:'admin',subscriber_id:state.adminSubscriber}):''}`);}
   catch(error){
     const removed=error.status===404;
     if(first||removed){$('detailData').hidden=true;$('deleteMonitor').classList.add('hidden');$('detailTitle').textContent=removed?'监控对象不可用':'库存尚未载入';$('detailMeta').textContent='';}
-    $('detailFeedback').hidden=false;$('detailNotice').textContent=removed?'当前账号没有订阅此对象。':first?'这次没有读到库存，请重试。':'这次没有读到最新库存，仍显示上次结果。';
+    const missing=state.detailSource==='admin'?(state.adminSubscriber!==null?'此对象已不在该客户的监控中。':'此监控对象不存在或已移除。'):'当前账号没有订阅此对象。';
+    $('detailFeedback').hidden=false;$('detailNotice').textContent=removed?missing:first?'这次没有读到库存，请重试。':'这次没有读到最新库存，仍显示上次结果。';
     $('retryDetail').hidden=removed;return;
   }finally{$('retryDetail').disabled=false;}
   state.currentTarget=id;state.detail=d;$('detailData').hidden=false;$('detailFeedback').hidden=true;$('retryDetail').hidden=true;
   $('deleteMonitor').classList.toggle('hidden',state.detailSource!=='monitors');const m=d.monitor;
-  $('detailTitle').textContent=m.remark||m.persona_name||m.label;
+  $('detailTitle').textContent=m.remark||m.persona_name||m.label;document.title=$('detailTitle').textContent+' · 库存详情 · CS2 Inventory';
   $('detailMeta').textContent=[m.remark&&m.persona_name!==m.remark?m.persona_name:null,m.steamid!==$('detailTitle').textContent?m.steamid:null].filter(Boolean).join(' · ');
   const show=!!state.user.can_view_inventory_diagnostics;$('detailQuality').classList.toggle('hidden',!show);
   $('detailQuality').innerHTML=show?`<details><summary>扫描诊断</summary><p>${esc(d.monitor.scan_label||statusText(d.monitor.scan_status))} · ${esc(d.monitor.last_error||'')}</p><pre style="white-space:pre-wrap">${esc(JSON.stringify(d.diagnostics||{},null,2))}</pre></details>`:'';
@@ -220,7 +230,6 @@ function renderComparison(){
   $('compareContent').innerHTML=`<p class="meta">${fmt(d.baseline.scanned_at)} → ${fmt(d.current.scanned_at)}</p><div class="items">${rows.length?rows.map(x=>`<div class="item-row diff-row"><span class="diff-badge">${x.l}</span><span>${esc(x.name)}</span><span class="qty">${esc(x.v)}</span></div>`).join(''):'<div class="empty">两次库存对比没有已确认的新增、减少或数量变化。</div>'}</div>${diagnostic}`;
 }
 
-let userRequest=0;
 const listGeneration={user:0,target:0};
 function adminDraft(kind,q){listGeneration[kind]++;adminTools.listState(kind,'loading',q,1)}
 async function loadAdminTable(kind){
@@ -228,12 +237,17 @@ async function loadAdminTable(kind){
  const query=state[key+'Query'],page=state[key+'Page'],generation=++listGeneration[kind];
  const current=()=>generation===listGeneration[kind]&&state.adminSection===section&&state.currentView==='admin'&&(!user||state.adminUserTask==='list');
  adminTools.listState(kind,'loading',query,page);
- const params=new URLSearchParams({page});if(query)params.set('q',query);
+ const params=new URLSearchParams({page});if(query)params.set('q',query);if(user){params.set('compact','1');if(state.adminUserState)params.set('user_state',state.adminUserState);}if(!user){targetScopeFields(params);showTargetScope();}
  try{
    const data=await api(`api/admin/${section}?${params}`);if(!current())return;
    state[key+'Page']=data.page;state[key+'Pages']=Math.max(1,data.pages);
    syncRootUrl();(user?renderUsers:renderTargets)(data);adminTools.listState(kind,'loaded',query,data.page);
- }catch(error){if(current())adminTools.listState(kind,'error',query,page)}
+ }catch(error){if(current()){
+   adminTools.listState(kind,'error',query,page);
+   if(!user&&[400,404].includes(error.status)&&(state.adminFailedBatch!==null||state.adminSubscriber!==null)){
+    $('adminTargetStatus').textContent=error.message;$('adminTargetRetry').hidden=true;
+   }
+ }}
 }
 const adminTools=AdminWorkspace.bind({
  initial:state.adminTargetQuery,userInitial:state.adminUserQuery,onDraft:adminDraft,onRetry:kind=>loadAdminTable(kind),
@@ -241,14 +255,121 @@ const adminTools=AdminWorkspace.bind({
  onUserSearch:q=>{state.adminUserQuery=q;state.adminUserPage=1;loadAdmin().catch(e=>toast(e.message,false))},
  onTask:task=>{if(task!==state.adminUserTask){state.adminUserTask=task;loadAdmin().catch(e=>toast(e.message,false))}}
 });
-async function loadAdmin(){showAdminSection(state.adminSection);syncRootUrl();if(state.adminSection==='overview'&&!state.user.can_view_inventory_diagnostics){const s=await api('api/admin/status');$('adminStatus').innerHTML=`<div class="stat"><span>监控目标</span><b>${s.targets}</b></div><div class="stat"><span>续期码</span><b>${s.activation_codes.unused}</b></div>`;return}if(state.adminSection==='overview'){const s=await api('api/admin/status'),q=s.quota||{},official=s.official_quota?.payload||{},quotaClass=q.warning_level==='critical'?'quota-critical':q.warning_level==='warning'?'quota-warning':'',quotaLabel=q.warning_level==='critical'?'\u4e25\u91cd\u9884\u8b66':q.warning_level==='warning'?'\u989d\u5ea6\u9884\u8b66':'\u6b63\u5e38';$('adminStatus').innerHTML=`<div class="stat"><span>\u5e73\u53f0\u76d1\u63a7\uff08\u53c2\u8003\u503c\uff09</span><b>${s.targets}/${s.target_limit}</b></div><div class="stat"><span>\u7b49\u5f85\u4efb\u52a1</span><b>${s.pending_jobs}</b></div><div class="stat"><span>\u4eca\u65e5\u4fdd\u5b88\u4f30\u7b97</span><b>${q.daily_used??0}/${q.daily_budget??'--'}</b></div><div class="stat ${quotaClass}"><span>\u8d26\u671f\u4f30\u7b97\u4f59\u989d \u4ec5\u9884\u8b66\u4e0d\u505c\u626b</span><b>${q.billing_remaining??'--'}</b><span>${quotaLabel}</span><span>账期起点 ${fmt(q.billing_period_start)} · ${q.billing_period_source==='provider_subscription'?'供应商订阅':'每月25日估算'}</span></div><div class="stat"><span>\u4f9b\u5e94\u5546\u4eca\u65e5 / \u672c\u6708</span><b>${official.today??'--'} / ${official.month??'--'}</b><span>${fmt(s.official_quota?.checked_at)}</span></div><div class="stat"><span>每日扫描计划（北京时间）</span><b>${q.scheduled_scans_per_day??'--'} 轮</b><span>${esc((q.scheduled_scan_hours_beijing||[]).map(h=>`${String(h).padStart(2,'0')}:00`).join(' / '))}</span><span>每目标每日约 ${q.estimated_scheduled_credits_per_target_day??'--'} credits（分页/重试另计）</span></div><div class="stat"><span>30k / 15k \u9884\u8b66\u7ebf</span><b>${q.warning_reserve??'--'} / ${q.critical_reserve??'--'}</b></div><div class="stat"><span>\u672a\u4f7f\u7528\u7eed\u671f\u7801</span><b>${s.activation_codes.unused}</b></div><div class="stat"><span>\u5df2\u5151\u6362\u7eed\u671f\u7801</span><b>${s.activation_codes.redeemed}</b></div>`;return}if(state.adminSection==='users'){const seq=++userRequest,task=state.adminUserTask;adminTools.showTask(task);if(task==='create')return;
- const current=()=>seq===userRequest&&state.adminSection==='users'&&state.currentView==='admin';
- if(task==='codes'){const codes=await api('api/admin/activation-codes');if(current())renderCodes(codes);return}
+async function loadAdmin(){showAdminSection(state.adminSection);syncRootUrl();if(state.adminSection==='overview')return AdminOverview.load({read:()=>api('api/admin/status'),privileged:state.user.can_view_inventory_diagnostics,active:()=>state.currentView==='admin'&&state.adminSection==='overview'});
+ if(state.adminSection==='users'){const task=state.adminUserTask;adminTools.showTask(task);if(task==='create')return;
+ if(task==='codes')return codeHistory.load();
  return loadAdminTable('user')}
 if(state.adminSection==='targets')return loadAdminTable('target')}
-function renderUsers(d){$('adminUserStatus').textContent=d.total?`共 ${d.total} 个账号`:state.adminUserQuery?'没有匹配的账号':'还没有账号';$('userPageLabel').textContent=`${state.adminUserPage} / ${state.adminUserPages}`;$('userPrev').disabled=state.adminUserPage<=1;$('userNext').disabled=state.adminUserPage>=state.adminUserPages;$('users').innerHTML=`<table class="data-table"><thead><tr><th>\u7528\u6237</th><th>\u6743\u76ca</th><th>\u76d1\u63a7/\u9650\u989d</th><th>\u5f53\u524d\u5bc6\u7801</th><th>\u64cd\u4f5c</th></tr></thead><tbody>${d.items.map(x=>{const e=x.entitlement||{},limit=e.monitor_limit==null?'\u65e0\u9650':e.monitor_limit;return `<tr><td><b>${esc(x.username)}</b><br><span class="meta">${esc(x.role)} - ${x.steamids.map(esc).join(', ')||'\u65e0 SteamID'}</span></td><td>${esc(e.plan||e.status)}<br><span class="meta">${fmt(e.expires_at)}</span></td><td>${x.monitor_count}/${limit}${e.kind==='customer'?`<div class="actions"><input class="user-limit" data-id="${x.id}" type="number" min="0" max="10000" value="${e.monitor_limit??0}" style="width:90px"><button class="limit-save" data-id="${x.id}">\u4fdd\u5b58</button></div>`:''}</td><td class="password-cell">${x.password_available?esc(x.password):'<span class="meta">\u5386\u53f2\u5bc6\u7801\u4e0d\u53ef\u8bfb\u53d6</span>'}</td><td><div class="actions">${x.id===state.user.id?'<span class="meta">\u5f53\u524d\u8d26\u53f7</span>':`<button class="danger user-delete" data-id="${x.id}" data-name="${esc(x.username)}">\u5220\u9664\u8d26\u53f7</button>`}<button class="outline-primary user-reset" data-id="${x.id}" data-name="${esc(x.username)}">\u91cd\u7f6e\u5bc6\u7801</button></div></td></tr>`}).join('')}</tbody></table>`;AdminWorkspace.labelRows($('users'));$('users').querySelectorAll('.user-delete').forEach(b=>b.onclick=()=>{if(confirm(`\u6c38\u4e45\u5220\u9664\u8d26\u53f7 ${b.dataset.name}\uff1f\u5171\u4eab\u76ee\u6807\u4fdd\u7559\uff0c\u65e0\u4e3b\u76ee\u6807\u548c\u5feb\u7167\u5c06\u4e00\u5e76\u5220\u9664\u3002`))busy(b,'...',async()=>{try{const result=await api(`api/admin/users/${b.dataset.id}`,{method:'DELETE'});toast(`\u8d26\u53f7\u5df2\u5220\u9664\uff0c\u6e05\u7406 ${result.deleted_targets} \u4e2a\u65e0\u4e3b\u76ee\u6807`);await loadAdmin()}catch(e){toast(e.message,false)}})});$('users').querySelectorAll('.user-reset').forEach(b=>b.onclick=()=>openPassword(Number(b.dataset.id),b.dataset.name));$('users').querySelectorAll('.limit-save').forEach(b=>b.onclick=()=>{const input=$('users').querySelector(`.user-limit[data-id="${b.dataset.id}"]`);busy(b,'...',async()=>{try{await adminPatch(Number(b.dataset.id),{monitor_limit:Number(input.value)});toast('\u76d1\u63a7\u9650\u989d\u5df2\u66f4\u65b0');await loadAdmin()}catch(e){toast(e.message,false)}})})}
-function renderTargets(d){$('adminTargetStatus').textContent=d.total?`共 ${d.total} 个目标`:state.adminTargetQuery?'没有匹配的目标':'还没有监控目标';$('targetPageLabel').textContent=`${state.adminTargetPage} / ${state.adminTargetPages}`;$('targetPrev').disabled=state.adminTargetPage<=1;$('targetNext').disabled=state.adminTargetPage>=state.adminTargetPages;$('adminTargets').innerHTML=`<table class="data-table"><thead><tr><th>\u76d1\u63a7\u76ee\u6807</th><th>\u8ba2\u9605</th><th>\u72b6\u6001</th><th>\u5e93\u5b58</th><th>\u6700\u8fd1\u626b\u63cf</th><th>\u64cd\u4f5c</th></tr></thead><tbody>${d.items.map(x=>`<tr><td><b>${esc(x.label)}</b></td><td>${x.subscriber_count}</td><td><span class="status ${esc(x.scan_status)}" title="${esc(x.scan_detail||x.last_error||'')}">${state.user.can_view_inventory_diagnostics?esc(x.scan_label||statusText(x.scan_status)):`交易保护中 ${x.inventory_sections?.protected?.total_items??'—'} 件`}</span>${x.scan_status==='partial'?`<div class="meta scan-quality-detail">${esc(x.scan_detail||x.last_error||'')}</div>`:''}</td><td>${'total_items' in x?(x.total_items??'—'):(x.latest?.total_items??'—')} \u4ef6</td><td>${fmt(x.last_complete_snapshot_at||x.inventory_sections?.protected?.updated_at)}</td><td><div class="actions"><button class="outline-primary target-open" data-id="${x.id}">\u67e5\u770b\u5e93\u5b58</button>${state.user.can_query_inventory?`<button class="target-scan" data-id="${x.id}">立即扫描</button>`:''}<button class="danger target-delete" data-id="${x.id}">\u5220\u9664\u76ee\u6807</button></div></td></tr>`).join('')}</tbody></table>`;AdminWorkspace.labelRows($('adminTargets'));$('adminTargets').querySelectorAll('.target-open').forEach(b=>b.onclick=()=>navigateToInventory(`monitors/${b.dataset.id}?source=admin&section=targets&target_page=${state.adminTargetPage}${state.adminTargetQuery?'&target_q='+encodeURIComponent(state.adminTargetQuery):''}`));$('adminTargets').querySelectorAll('.target-scan').forEach(b=>b.onclick=()=>busy(b,'...',async()=>{try{await api(`api/admin/targets/${b.dataset.id}/scan`,{method:'POST'});toast('\u626b\u63cf\u4efb\u52a1\u5df2\u8fdb\u5165\u961f\u5217');await loadAdmin()}catch(e){toast(e.message,false)}}));$('adminTargets').querySelectorAll('.target-delete').forEach(b=>b.onclick=()=>{if(confirm('\u5220\u9664\u8be5\u76ee\u6807\u3001\u5168\u90e8\u8ba2\u9605\u548c\u5feb\u7167\uff1f'))busy(b,'...',async()=>{try{await api(`api/admin/targets/${b.dataset.id}`,{method:'DELETE'});toast('\u76d1\u63a7\u76ee\u6807\u5df2\u5220\u9664');await loadAdmin()}catch(e){toast(e.message,false)}})})}
-function renderCodes(d){$('activationCodes').innerHTML=`<table class="data-table"><thead><tr><th>\u524d\u7f00</th><th>\u5957\u9910</th><th>\u9650\u989d</th><th>\u72b6\u6001</th><th>\u521b\u5efa/\u5151\u6362</th><th>\u64cd\u4f5c</th></tr></thead><tbody>${d.items.map(x=>`<tr><td><b>${esc(x.prefix)}...</b></td><td>${esc(x.plan)}</td><td>${x.monitor_limit}</td><td>${esc(x.status)}</td><td>${fmt(x.created_at)}<br><span class="meta">${fmt(x.redeemed_at)}</span></td><td>${x.status==='unused'?`<button class="danger code-revoke" data-id="${x.id}">\u64a4\u9500</button>`:'-'}</td></tr>`).join('')}</tbody></table>`;AdminWorkspace.labelRows($('activationCodes'));$('activationCodes').querySelectorAll('.code-revoke').forEach(b=>b.onclick=()=>busy(b,'...',async()=>{try{await api(`api/admin/activation-codes/${b.dataset.id}`,{method:'DELETE'});toast('\u9080\u8bf7\u7801\u5df2\u64a4\u9500');await loadAdmin()}catch(e){toast(e.message,false)}}))}
+$('adminUserState').value=state.adminUserState;
+$('adminUserState').onchange=()=>{
+ state.adminUserState=$('adminUserState').value;state.adminUserPage=1;state.adminUserQuery=$('adminUserSearch').value.trim();adminTools.setUserSearch(state.adminUserQuery);loadAdminTable('user');
+};
+function renderUsers(d){
+ const counts=d.state_counts;
+ if(counts){const labels={'':'全部状态',expiring:'7天内到期',grace:'宽限期',expired:'已到期'};for(const option of $('adminUserState').options){option.textContent=labels[option.value]+' · '+counts[option.value||'all'];}}
+ const root=$('users'),list=d.items,meaning={active:'使用中',active_permanent:'永久有效',grace:'宽限期',expired:'已到期',admin:'管理员',internal:'内部账号'},plans={monthly:'月度',annual:'年度',permanent:'永久'};
+ $('adminUserStatus').textContent=d.total?`共 ${d.total} 个账号`:state.adminUserQuery||state.adminUserState?'没有符合条件的账号':'还没有账号';
+ $('userPageLabel').textContent=`${state.adminUserPage} / ${state.adminUserPages}`;$('userPrev').disabled=state.adminUserPage<=1;$('userNext').disabled=state.adminUserPage>=state.adminUserPages;
+ if(!list.length){root.replaceChildren();return;}
+ root.innerHTML=`<table class="data-table customer-directory"><thead><tr><th>账号</th><th>权益状态</th><th>监控与限额</th><th>管理操作</th></tr></thead><tbody>${list.map(x=>{
+  const e=x.entitlement||{},customer=e.kind==='customer'&&x.role!=='admin',limit=e.monitor_limit??'不限',name=esc(x.username);
+  const date=e.status==='grace'?e.grace_ends_at:e.expires_at;
+  const when=customer&&date?`<small>${e.status==='grace'?'宽限至':e.status==='expired'?'到期于':'有效至'} ${esc(fmt(date))}</small>`:'';
+  const stateText=meaning[e.status]||'未设置';
+  return `<tr data-customer="${x.id}"><td><strong>${name}</strong><small>${x.role==='admin'?'管理员':customer?'客户':'内部账号'}${x.id===state.user.id?' · 当前账号':''}</small></td>
+  <td><span class="entitlement-tag" data-status="${esc(e.status)}">${stateText}</span>${customer&&plans[e.plan]?` <span>${plans[e.plan]}</span>`:''}${when}</td>
+  <td><a class="customer-monitors" href="${esc(consoleUrl('?view=admin&section=targets&subscriber_id='+x.id))}" aria-label="查看 ${name} 的 ${x.monitor_count} 个监控">${x.monitor_count} 个监控</a>${customer?`<span class="limit-summary"> / 限额 <b>${limit}</b></span><details class="limit-editor"><summary aria-label="修改 ${name} 的监控限额">修改限额</summary><form class="customer-limit-form"><label for="limit-${x.id}">${name} 的新限额</label><input id="limit-${x.id}" class="user-limit" type="number" inputmode="numeric" min="0" max="10000" step="1" value="${e.monitor_limit??''}" required><button type="submit" class="limit-save">保存限额</button></form></details><span class="limit-result" role="status"></span>`:''}</td>
+  <td><details class="customer-tools"><summary aria-label="管理账号 ${name}">管理账号</summary><div class="actions"><button type="button" class="ghost user-reset" data-id="${x.id}" data-name="${name}" aria-label="重置 ${name} 的密码">重置密码</button>${x.id===state.user.id?'':`<button type="button" class="danger user-delete" data-id="${x.id}" data-name="${name}" aria-label="删除账号 ${name}">删除账号</button>`}</div></details><span class="customer-action-result" role="status"></span></td></tr>`;
+ }).join('')}</tbody></table>`;AdminWorkspace.labelRows(root);
+ const lookup=new Map(list.map(x=>[String(x.id),x]));
+ for(const row of root.querySelectorAll('tr[data-customer]')){
+  const x=lookup.get(row.dataset.customer),del=row.querySelector('.user-delete'),reset=row.querySelector('.user-reset');
+  reset.onclick=()=>openPassword(x.id,x.username);
+  if(del)del.onclick=()=>{if(confirm(`永久删除账号 ${x.username}？共享目标保留，无主目标和快照将一并删除。`))busy(del,'删除中…',async()=>{try{const result=await api(`api/admin/users/${x.id}`,{method:'DELETE'});toast(`账号已删除，清理 ${result.deleted_targets} 个无主目标`);await loadAdmin()}catch(e){toast(e.message,false)}});};
+  const form=row.querySelector('.customer-limit-form');if(!form)continue;
+  const field=form.querySelector('input'),editor=form.closest('details'),msg=row.querySelector('.limit-result'),save=form.querySelector('button');
+  field.oninput=()=>{msg.textContent='';};
+  form.onsubmit=e=>{e.preventDefault();if(save.disabled)return;return busy(save,'保存中…',async()=>{
+   const amount=field.valueAsNumber;field.readOnly=true;
+   try{await adminPatch(x.id,{monitor_limit:amount});row.querySelector('.limit-summary b').textContent=amount;msg.textContent=`限额已更新为 ${amount}`;editor.open=false;editor.querySelector('summary').focus();}
+   catch(err){msg.textContent=err.message;field.focus();}finally{field.readOnly=false;}
+  });};
+ }
+}
+function targetScopeFields(query){
+ if(state.adminOrder!=='newest')query.set('order',state.adminOrder);
+ if(state.adminFailedBatch!==null)query.set('failed_batch',state.adminFailedBatch);
+ if(state.adminSubscriber!==null)query.set('subscriber_id',state.adminSubscriber);
+}
+let targetScopeInfo,targetOrderTimeField='last_success_at';
+function showTargetScope(scope=targetScopeInfo){
+ const node=$('adminTargetScope'),values=[
+  ['failed_batch',state.adminFailedBatch,'本轮失败',scope?.failed_batch?.label],
+  ['subscriber_id',state.adminSubscriber,'订阅客户',scope?.subscriber?.username]
+ ].filter(([,value])=>value!==null);
+ node.hidden=!values.length;
+ node.innerHTML=values.map(([key,value,title,label])=>{
+  const href=new URL(rootStateUrl('admin'),location.origin);href.searchParams.delete(key);href.searchParams.set('target_page','1');
+  return `<span class="scope-chip">${title} · ${esc(label||'#'+value)}<a data-clear-target-scope="${key}" aria-label="清除${title}筛选" href="${esc(href.pathname+href.search)}">移除</a></span>`;
+ }).join('');
+}
+$('adminTargetOrder').value=state.adminOrder;
+$('adminTargetOrder').onchange=()=>{
+ const order=$('adminTargetOrder').value;if(order===state.adminOrder)return;
+ const old=rootStateUrl('admin');
+ state.adminOrder=order;state.adminTargetQuery=$('adminTargetSearch').value.trim();
+ adminTools.setTargetSearch(state.adminTargetQuery);state.adminTargetPage=1;
+ const next=rootStateUrl('admin');if(next!==old)history.pushState({},'',next);
+ loadAdminTable('target');
+};
+function targetDetailPath(id){
+ const list=new URL(rootStateUrl('admin'),location.origin).searchParams;
+ list.delete('view');list.set('source','admin');
+ return `monitors/${id}?${list}`;
+}
+function adminTargetCard(x){
+ const title=x.label,remarks=x.remarks||[],term=state.adminTargetQuery.trim().toLocaleLowerCase();
+ const matched=term&&remarks.find(r=>r.remark!==title&&r.remark.toLocaleLowerCase().includes(term));
+ const {protected:locked={}}=x.inventory_sections||{},detail=targetDetailPath(x.id);
+ const adminStatus=state.user.can_view_inventory_diagnostics&&x.scan_label;
+ return `<article class="inventory-card admin-target-card" aria-labelledby="target-name-${x.id}">
+  <div class="target-identity"><header class="admin-target-heading"><div><h4 id="target-name-${x.id}">${esc(title)}</h4>
+   ${x.persona_name&&x.persona_name!==title?`<div class="target-nickname">Steam 昵称：${esc(x.persona_name)}</div>`:''}
+   ${title!==x.steamid?`<span class="target-steamid">${esc(x.steamid)}</span>`:''}</div>
+   ${adminStatus?`<span class="target-state">${esc(adminStatus)}</span>`:''}</header>
+  ${state.adminOrder==='recent_scan'?`<div class="target-sorted-time">${targetOrderTimeField==='last_scan_at'?'上次扫描':'最近成功扫描'} ${cardTime(x[targetOrderTimeField])||'尚无记录'}</div>`:''}
+  ${matched?`<div class="target-match">匹配备注：${esc(matched.remark)}</div>`:''}
+  </div><div class="target-readout"><div class="target-metrics"><div class="target-protected" data-metric="protected"><span>当前交易保护</span><strong>${locked.total_items??'—'} <small>件</small></strong>
+   ${cardTime(locked.updated_at)||(locked.total_items==null?'<small class="target-not-read">暂无记录</small>':'')}</div><div data-metric="stock"><span>最近完整库存</span><strong>${x.total_items??'—'} <small>件</small></strong>${cardTime(x.last_complete_snapshot_at)||(x.total_items==null?'<small class="target-not-read">暂无完整记录</small>':'')}</div></div>
+  <div class="target-growth" role="group" aria-label="查看交易保护新增物品">${[['1','1日内新增'],['7','7日内新增']].map(([days,label])=>{const n=x.protected_additions?.[days];return `<button type="button" class="ghost growth-window" data-growth-days="${days}" aria-expanded="false" aria-controls="target-growth-${x.id}">${label} <b>${n==null?'—':'+'+n}</b><span aria-hidden="true">⌄</span></button>`;}).join('')}</div><div class="target-growth-detail" id="target-growth-${x.id}" aria-label="加仓物品" aria-live="polite" hidden></div>
+  </div>${remarks.length?`<details class="target-aliases"><summary>${x.subscriber_count} 人订阅 · ${remarks.length} 条备注</summary><dl>${remarks.map(r=>`<div><dt>${esc(r.username)}</dt><dd>${esc(r.remark)}</dd></div>`).join('')}</dl></details>`:`<p class="target-subs">${x.subscriber_count} 人订阅</p>`}
+  <div class="target-actions"><a class="outline-primary target-open" href="${esc(consoleUrl(detail))}" data-id="${x.id}" aria-label="查看${esc(title)}的库存">查看库存 <span aria-hidden="true">→</span></a>
+   <details class="target-options"><summary aria-label="管理${esc(title)}">管理</summary><div>${state.user.can_query_inventory?`<button type="button" class="ghost target-scan" data-id="${x.id}">立即扫描</button>`:''}
+   <button type="button" class="ghost target-delete" data-id="${x.id}">删除目标</button></div></details></div>
+ </article>`;
+}
+function renderTargets(d){
+ targetScopeInfo=d.scope;showTargetScope();targetOrderTimeField=d.order_time_field||(state.user.can_view_inventory_diagnostics?'last_scan_at':'last_success_at');
+ $('adminTargetOrder').querySelector('[value="recent_scan"]').textContent=targetOrderTimeField==='last_scan_at'?'最近扫描':'最近成功扫描';
+ const root=$('adminTargets');$('adminTargetStatus').textContent=d.total?`共 ${d.total} 个目标`:state.adminTargetQuery?'没有匹配的目标':state.adminFailedBatch!==null||state.adminSubscriber!==null?'此范围内没有监控目标':'还没有监控目标';
+ $('targetPageLabel').parentElement.hidden=state.adminTargetPages<=1;$('targetPageLabel').textContent=`${state.adminTargetPage} / ${state.adminTargetPages}`;$('targetPrev').disabled=state.adminTargetPage<=1;$('targetNext').disabled=state.adminTargetPage>=state.adminTargetPages;
+ root.innerHTML=d.items.map(adminTargetCard).join('');
+ AdminTargetGrowth.attach(root.querySelectorAll('article'),{read:api,fmt,esc,detailPath:id=>consoleUrl(targetDetailPath(id)),navigate:(id,name,progress)=>{
+  const filters=new URLSearchParams({protected:'1',item:name});navigateToInventory(targetDetailPath(id)+'&'+filters,id,progress);
+ }});
+ for(const link of root.querySelectorAll('.target-open'))link.onclick=e=>{
+  if(e.button||e.ctrlKey||e.shiftKey||e.metaKey||e.altKey)return;
+  e.preventDefault();navigateToInventory(targetDetailPath(link.dataset.id),Number(link.dataset.id));
+ };
+ for(const b of root.querySelectorAll('.target-scan'))b.onclick=()=>busy(b,'提交中',async()=>{try{await api(`api/admin/targets/${b.dataset.id}/scan`,{method:'POST'});toast('扫描任务已进入队列');await loadAdmin()}catch(e){toast(e.message,false)}});
+ for(const b of root.querySelectorAll('.target-delete'))b.onclick=()=>{const target=d.items.find(x=>String(x.id)===b.dataset.id);
+  if(confirm(`删除「${target.label}」及其全部订阅和快照？`))busy(b,'删除中',async()=>{try{await api(`api/admin/targets/${b.dataset.id}`,{method:'DELETE'});toast('监控目标已删除');await loadAdmin()}catch(e){toast(e.message,false)}});
+ };
+}
+const codeHistory=AdminCodeHistory.bind({params,read:api,sync:syncRootUrl,esc,fmt,
+ active:()=>state.currentView==='admin'&&state.adminSection==='users'&&state.adminUserTask==='codes',
+ currentCode:()=>$('issuedCodePanel').dataset.codeId,clearCode:()=>adminTools.showCode('')});
+
 const adminPatch=(id,data)=>api(`api/admin/users/${id}`,{method:'PATCH',body:JSON.stringify(data)});function openPassword(id,name){state.resetUserId=id;$('passwordDialogUser').textContent=`\u7528\u6237\uff1a${name}`;$('adminNewPassword').value='';$('passwordDialog').showModal();$('adminNewPassword').focus()}function openRemark(id,steamid,remark){state.remarkTargetId=id;$('remarkTarget').textContent=`SteamID: ${steamid}`;$('remarkInput').value=remark||'';$('remarkDialog').showModal();$('remarkInput').focus()}$('authForm').onsubmit=async e=>{e.preventDefault();try{const d=await api('api/auth/login',{method:'POST',body:JSON.stringify({username:$('username').value.trim(),password:$('password').value})});state.csrf=d.csrf_token;await boot()}catch(x){$('authMessage').className='error';$('authMessage').textContent=x.message}};
 function steamProfileId(value){
  const text=value.trim();
@@ -272,7 +393,7 @@ $('prev').onclick=async()=>{if(state.page>1){state.page--;syncRootUrl();await lo
 $('itemSearch').oninput=resetInventoryList;$('protectedOnly').onchange=resetInventoryList;$('itemSort').onchange=resetInventoryList;
 $('itemMore').onclick=()=>{inventoryLimit+=inventoryPageSize;renderItems(true);};
 $('clearItemFilters').onclick=()=>{$('itemSearch').value='';$('protectedOnly').checked=false;resetInventoryList();$('itemSearch').focus();};$('compareSwitch').querySelectorAll('button').forEach(b=>b.onclick=()=>loadComparison(Number(b.dataset.days)));
-$('userPrev').onclick=async()=>{if(state.adminUserPage>1){state.adminUserPage--;syncRootUrl();await loadAdmin()}};$('userNext').onclick=async()=>{if(state.adminUserPage<state.adminUserPages){state.adminUserPage++;syncRootUrl();await loadAdmin()}};$('targetPrev').onclick=async()=>{if(state.adminTargetPage>1){state.adminTargetPage--;syncRootUrl();await loadAdmin()}};$('targetNext').onclick=async()=>{if(state.adminTargetPage<state.adminTargetPages){state.adminTargetPage++;syncRootUrl();await loadAdmin()}};$('createUserForm').onsubmit=async e=>{e.preventDefault();await busy($('createUser'),'...',async()=>{try{await api('api/admin/users',{method:'POST',body:JSON.stringify({username:$('newUsername').value.trim(),password:$('newPassword').value,plan:$('newPlan').value,monitor_limit:Number($('newLimit').value)})});state.adminUserQuery=$('newUsername').value.trim();state.adminUserPage=1;state.adminUserTask='list';adminTools.setUserSearch(state.adminUserQuery);$('newUsername').value='';$('newPassword').value='';toast('\u5ba2\u6237\u8d26\u6237\u5df2\u521b\u5efa');await loadAdmin()}catch(x){toast(x.message,false)}})};$('passwordCancel').onclick=()=>$('passwordDialog').close();$('passwordResetForm').onsubmit=async e=>{e.preventDefault();await busy($('passwordConfirm'),'...',async()=>{try{await adminPatch(state.resetUserId,{new_password:$('adminNewPassword').value});$('passwordDialog').close();toast('\u5bc6\u7801\u5df2\u91cd\u7f6e\u5e76\u53ef\u5728\u5217\u8868\u4e2d\u67e5\u770b');await loadAdmin()}catch(x){toast(x.message,false)}})};$('remarkCancel').onclick=()=>$('remarkDialog').close();$('remarkForm').onsubmit=async e=>{e.preventDefault();await busy($('remarkSave'),'...',async()=>{try{await api(`api/monitors/${state.remarkTargetId}`,{method:'PATCH',body:JSON.stringify({remark:$('remarkInput').value})});$('remarkDialog').close();toast('\u5907\u6ce8\u5df2\u66f4\u65b0');await loadMonitors()}catch(x){toast(x.message,false)}})};{
+$('userPrev').onclick=async()=>{if(state.adminUserPage>1){state.adminUserPage--;syncRootUrl();await loadAdmin()}};$('userNext').onclick=async()=>{if(state.adminUserPage<state.adminUserPages){state.adminUserPage++;syncRootUrl();await loadAdmin()}};$('targetPrev').onclick=async()=>{if(state.adminTargetPage>1){state.adminTargetPage--;syncRootUrl();await loadAdmin()}};$('targetNext').onclick=async()=>{if(state.adminTargetPage<state.adminTargetPages){state.adminTargetPage++;syncRootUrl();await loadAdmin()}};$('createUserForm').onsubmit=async e=>{e.preventDefault();await busy($('createUser'),'...',async()=>{try{await api('api/admin/users',{method:'POST',body:JSON.stringify({username:$('newUsername').value.trim(),password:$('newPassword').value,plan:$('newPlan').value,monitor_limit:Number($('newLimit').value)})});state.adminUserQuery=$('newUsername').value.trim();state.adminUserState=$('adminUserState').value='';state.adminUserPage=1;state.adminUserTask='list';adminTools.setUserSearch(state.adminUserQuery);$('newUsername').value='';$('newPassword').value='';toast('\u5ba2\u6237\u8d26\u6237\u5df2\u521b\u5efa');await loadAdmin()}catch(x){toast(x.message,false)}})};$('passwordCancel').onclick=()=>$('passwordDialog').close();$('passwordResetForm').onsubmit=async e=>{e.preventDefault();await busy($('passwordConfirm'),'...',async()=>{try{await adminPatch(state.resetUserId,{new_password:$('adminNewPassword').value});const row=$('users').querySelector(`tr[data-customer="${state.resetUserId}"]`);if(row)row.querySelector('.customer-action-result').textContent='密码已重置';$('passwordDialog').close();toast('密码已重置');}catch(x){toast(x.message,false)}})};$('remarkCancel').onclick=()=>$('remarkDialog').close();$('remarkForm').onsubmit=async e=>{e.preventDefault();await busy($('remarkSave'),'...',async()=>{try{await api(`api/monitors/${state.remarkTargetId}`,{method:'PATCH',body:JSON.stringify({remark:$('remarkInput').value})});$('remarkDialog').close();toast('\u5907\u6ce8\u5df2\u66f4\u65b0');await loadMonitors()}catch(x){toast(x.message,false)}})};{
  const form=$('redeemCodeForm'),field=$('activationCode'),button=$('redeemCode'),feedback=$('activationFeedback'),receipt=$('activationReceipt');
  field.oninput=()=>{field.removeAttribute('aria-invalid');feedback.textContent='';receipt.textContent='';};
  form.onsubmit=async event=>{
@@ -296,36 +417,14 @@ $('userPrev').onclick=async()=>{if(state.adminUserPage>1){state.adminUserPage--;
   if(['monitors','subscriptions'].includes(state.currentView))loadMonitors().catch(error=>msg(error.message));
  };
 }
-$('createCodeForm').onsubmit=e=>{e.preventDefault();return busy($('createCode'),'...',async()=>{try{const d=await api('api/admin/activation-codes',{method:'POST',body:JSON.stringify({plan:$('codePlan').value,monitor_limit:Number($('codeLimit').value)})});adminTools.showCode(d.code);toast('\u7eed\u671f\u9080\u8bf7\u7801\u5df2\u751f\u6210');await loadAdmin()}catch(e){toast(e.message,false)}})};
+$('createCodeForm').onsubmit=e=>{e.preventDefault();return busy($('createCode'),'...',async()=>{try{const d=await api('api/admin/activation-codes',{method:'POST',body:JSON.stringify({plan:$('codePlan').value,monitor_limit:Number($('codeLimit').value)})});if(state.currentView!=='admin'||state.adminSection!=='users'||state.adminUserTask!=='codes')return;$('issuedCodePanel').dataset.codeId=String(d.item.id);adminTools.showCode(d.code);toast('\u7eed\u671f\u9080\u8bf7\u7801\u5df2\u751f\u6210');await loadAdmin()}catch(e){toast(e.message,false)}})};
 $('monitorSearch').oninput=()=>{clearTimeout(state.searchTimer);state.searchTimer=setTimeout(()=>{state.page=1;loadMonitors().catch(e=>toast(e.message,false));},250)};
-function queryEntries(){return $('adminSteamid').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map(line=>{const match=line.match(/^([0-9]+)(?:[\s,，]+(.*))?$/);return {steamid:match?.[1]||line,alias:match?.[2]||''};});}
-$('adminSteamid').oninput=()=>{const count=new Set(queryEntries().map(x=>x.steamid)).size,rate=Number(document.body.dataset.creditRate)||3;$('queryEstimate').textContent=`${count} 个目标，基础约 ${count*2} 次付费请求 / ${count*2*rate} credits；分页、重试另计，已在运行的任务复用。`;};
-$('adminQuery').onclick=()=>busy($('adminQuery'),'提交中',async()=>{
- try{const items=queryEntries();if(!items.length)throw new Error('请输入 SteamID64');
- const d=await api('api/admin/queries',{method:'POST',body:JSON.stringify({items})});
- state.queryToken=(state.queryToken||0)+1;const token=state.queryToken;
- $('queryEstimate').textContent=`本批新增任务基础 ${d.estimated_requests} 次请求，约 ${d.estimated_requests*d.credits_per_request} credits；分页、重试另计，复用任务不重复查询。`;
- $('adminQueryResult').innerHTML=d.items.map(x=>`<article class="query-result" id="query-${x.job_id}"><h3>${esc(x.alias||x.steamid)}</h3><p class="meta">${esc(x.steamid)} · ${x.reused?'复用已有任务':'已加入队列'}</p><div class="query-body">等待保护库存</div></article>`).join('');
- d.items.forEach(x=>refreshQuery(x,token));
- }catch(e){toast(e.message,false)}
+const adminInstant = AdminInstantQuery.bind({
+ api,esc,user:()=>state.user?.id,active:()=>state.currentView==='query',
+ sectionsMarkup:querySectionsMarkup,recordUrl:id=>historyUrl(1,id),targetUrl:id=>consoleUrl(`monitors/${id}?source=admin`),
+ rate:Number(document.body.dataset.creditRate)
 });
 function querySectionsMarkup(sections){return [['protected','交易保护中'],['other','其他可见物品']].map(([key,title])=>{const section=sections[key]||{};return `<details ${key==='protected'?'open':''}><summary>${title} · ${section.total_items??'—'} 件</summary><p class="meta">更新时间 ${fmt(section.updated_at)}</p>${(section.items||[]).map(x=>`<div class="item-row"><span>${esc(x.name)}</span><span>${x.count} 件</span></div>`).join('')}</details>`}).join('');}
-async function refreshQuery(entry,token){
- if(token!==state.queryToken)return;
- const holder=$(`query-${entry.job_id}`);if(!holder)return;
- try{const d=await api(`api/jobs/${entry.job_id}`);let result=d.result;
- if(result?.target_id)result=await api(`api/monitors/${result.target_id}`);
- if(token!==state.queryToken)return;
- const sections=result?.inventory_sections;
- holder.querySelector('.query-body').innerHTML=(sections?querySectionsMarkup(sections):'<p>正在查询库存…</p>')+`<p class="meta">${['queued','running'].includes(d.status)?'正在更新':'本次查询已结束'}${entry.target_id?` · <a href="${consoleUrl(`monitors/${entry.target_id}?source=admin`)}">查看库存</a>`:''}</p>`;
- if(!['queued','running'].includes(d.status)){
-  const diagnostic=d.result?.diagnostics||d.result?.quality;
-  if(diagnostic||d.error)holder.querySelector('.query-body').innerHTML+=`<details><summary>查询诊断</summary><pre>${esc(JSON.stringify({...(diagnostic||{}),error:d.error},null,2))}</pre></details>`;
-  return;
- }
- setTimeout(()=>refreshQuery(entry,token),2500);
- }catch(e){holder.querySelector('.query-body').textContent=e.message;}
-}
 function clearHistoryFocus(){state.historyFocus=0;history.replaceState({...history.state,queryFocus:0},'',location.href);}
 function historyUrl(page,job=0,focus=0){
  const next=new URLSearchParams({view:'queryHistory',query_page:String(page)});
@@ -354,19 +453,37 @@ function readHistoryRecord(focusTitle=true){
  });
 }
 $('queryRecordRetry').onclick=()=>readHistoryRecord();
+let historyListRead=0;
 async function loadQueryHistory(){
  if(state.historyJob)return readHistoryRecord();
- $('queryHistoryList').hidden=false;$('queryRecordPanel').hidden=true;document.title='查询历史 · CS2 Inventory';
- const d=await api(`api/admin/queries?page=${state.queryHistoryPage||1}`);state.queryHistoryPage=d.page;state.queryHistoryPages=Math.max(1,d.pages);syncRootUrl();
- $('queryHistoryPage').textContent=`${d.page} / ${state.queryHistoryPages}`;$('queryHistoryPrev').disabled=d.page<=1;$('queryHistoryNext').disabled=d.page>=state.queryHistoryPages;
+ const generation=++historyListRead,requested=state.queryHistoryPage||1;
+ const current=()=>generation===historyListRead&&state.currentView==='queryHistory'&&!state.historyJob;
+ const rows=$('queryHistoryRows'),status=$('historyListStatus'),retry=$('historyListRetry'),prev=$('queryHistoryPrev'),next=$('queryHistoryNext');
+ const fromControl=[prev,next,retry].includes(document.activeElement);
+ $('queryHistoryList').hidden=false;$('queryRecordPanel').hidden=true;document.title='查询历史 · CS2 Inventory';syncRootUrl();
+ if(fromControl)status.focus();
+ rows.replaceChildren();rows.setAttribute('aria-busy','true');prev.disabled=next.disabled=true;retry.hidden=true;
+ status.textContent='正在读取第 '+requested+' 页…';$('queryHistoryPage').textContent='第 '+requested+' 页';
+ let d;
+ try{d=await api(`api/admin/queries?page=${requested}`);}
+ catch{
+  if(!current())return;
+  rows.setAttribute('aria-busy','false');status.textContent='第 '+requested+' 页查询历史读取失败。';retry.hidden=false;
+  if(fromControl&&document.activeElement===status)retry.focus();return;
+ }
+ if(!current())return;
+ rows.setAttribute('aria-busy','false');state.queryHistoryPage=d.page;state.queryHistoryPages=Math.max(1,d.pages);syncRootUrl();
+ status.textContent=d.total?'共 '+d.total+' 条查询记录':'';
+ $('queryHistoryPage').textContent=`${d.page} / ${state.queryHistoryPages}`;prev.disabled=d.page<=1;next.disabled=d.page>=state.queryHistoryPages;
  $('queryHistoryRows').innerHTML=d.items.length?d.items.map(x=>`<div class="history-row"><div><b>${esc(x.alias||x.steamid)}</b><p>${esc(x.steamid)} · ${fmt(x.created_at)}</p><small>${esc(x.status==='completed'?'已完成':statusText(x.status))}</small></div><a class="query-history-open" data-id="${x.id}" href="${esc(historyUrl(d.page,x.id))}" aria-label="${esc('查看 '+(x.alias||x.steamid)+' 的结果')}">查看结果</a></div>`).join(''):'<div class="empty">暂无查询记录</div>';
- const rows=$('queryHistoryRows');
  for(const link of rows.querySelectorAll('.query-history-open')){
   link.onclick=event=>{if(!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey){history.replaceState({...history.state,queryFocus:Number(link.dataset.id)},'',location.href);}};
  }
  const focus=state.historyFocus||history.state?.queryFocus;
- if(focus)(rows.querySelector(`[data-id="${Number(focus)}"]`)||$('queryHistoryHeading')).focus();
+ if(focus && (document.activeElement===document.body||document.activeElement===status))(rows.querySelector(`[data-id="${Number(focus)}"]`)||$('queryHistoryHeading')).focus();
+ else if(fromControl&&document.activeElement===status)(rows.querySelector('a')||$('queryHistoryHeading')).focus();
 }
+$('historyListRetry').onclick=()=>loadQueryHistory();
 $('queryHistoryPrev').onclick=()=>{clearHistoryFocus();state.queryHistoryPage=Math.max(1,state.queryHistoryPage-1);loadQueryHistory().catch(e=>toast(e.message,false))};
 $('queryHistoryNext').onclick=()=>{clearHistoryFocus();state.queryHistoryPage=Math.min(state.queryHistoryPages,state.queryHistoryPage+1);loadQueryHistory().catch(e=>toast(e.message,false))};
 function detailTab(tab,snapshot=null){

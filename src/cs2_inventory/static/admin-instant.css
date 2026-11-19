@@ -1,0 +1,18 @@
+#queryView [hidden]{display:none}
+.instant-heading,.instant-submit,.instant-result-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 15px}
+.instant-heading{justify-content:space-between;align-items:flex-start}.instant-heading h2{margin:0}.instant-heading p{margin:4px 0 0;color:var(--muted)}
+#instantQueryForm{margin-top:14px}#instantHelp,#queryEstimate,#instantStatus{margin:5px 0;font-size:14px}#instantStatus:empty{display:none}
+#adminSteamid{width:100%;max-width:100%;resize:vertical;line-height:1.5}#adminSteamid[aria-invalid=true]{border-color:var(--protected-border)}
+#instantPreview{max-width:100%;margin:5px 0}#instantPreview summary{display:list-item;min-height:40px;align-content:center;font-weight:650;cursor:pointer;color:var(--blue)}
+#instantPreviewList{margin:3px 0 8px;padding-left:25px;overflow-wrap:anywhere}#instantPreviewList small{margin-left:7px;color:var(--muted)}
+.instant-problems{padding:8px 10px;border-left:3px solid var(--protected-border);background:var(--protected-start);color:var(--protected-text)}
+.instant-problems p{margin:0}.instant-problems ul{margin:0;padding:0;list-style:none}
+.instant-problems .instant-row-fix{min-height:40px;padding:3px 0;background:none;border:0;box-shadow:none;color:inherit;text-decoration:underline;text-align:left}
+.instant-submit{margin-top:10px}.instant-submit button,#queryView .instant-result-actions>*{min-height:44px}
+#instantResults{margin-top:18px;border-top:1px solid var(--row-border);padding-top:10px}
+#instantResultsTitle{margin:0 0 9px}#adminQueryResult{display:grid;gap:10px}
+#queryView .query-result{padding:14px;border:1px solid var(--row-border);border-radius:10px;background:var(--panel2);overflow-wrap:anywhere}
+#queryView .query-result h4{margin:0;font-size:16px}#queryView .query-result p{margin:5px 0}
+.instant-result-actions a{align-content:center;color:var(--blue);text-underline-offset:3px}
+@media(max-width:560px){.instant-problems .instant-row-fix,#instantPreview summary{min-height:44px}.instant-heading>div{flex:1}.instant-submit .meta{display:none}}
+.instant-history{display:inline-flex;align-items:center;min-height:44px;color:var(--blue);text-underline-offset:3px}

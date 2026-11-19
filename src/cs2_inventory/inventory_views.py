@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from .api_inventory import API_POLICIES, SECTIONS
@@ -12,34 +13,101 @@ from .models import ScanJob, Snapshot, beijing_iso
 from .observation import new_protected_units, row_evidence, snapshot_quality
 
 
-def protected_additions(rows, current):
-    """按北京时间自然日对照资产身份；当前保护分区和基线全库存分别取证。"""
-    result = {"7": None, "1": None}
-    if current is None:
-        return result
-    quality = snapshot_quality(current)
-    if not quality.get("api_contexts", {}).get("protected", {}).get("complete"):
-        return result
-    current_date = date.fromisoformat(beijing_iso(current.scanned_at)[:10])
-    days = {(current_date - timedelta(days=n)).isoformat(): str(n) for n in (7, 1)}
-    protected = [item for item in current.items if item.is_trade_protected and
-                 "protected" in row_evidence(item).get("api_contexts", [])]
+@dataclass
+class InventorySources:
+    """同一目标的当前分区、完整轮次和按北京自然日选定的加仓对照。"""
+    sections: dict
+    full: Snapshot | None
+    baselines: dict
+    quality: dict
+    last_quality: dict
+
+    def item_ids(self):
+        return {row.id for row in (*self.sections.values(), *self.baselines.values())}
+
+def inventory_sources(rows):
+    # 先按时间降序选来源；只在入选的分区及 1/7 日基线中读取饰品。
+    api_rows = []
+    qualities = {}
     for row in rows:
-        key = beijing_iso(row.scanned_at)[:10]
-        if key not in days:
-            continue
-        baseline = snapshot_quality(row)
-        if (baseline.get("source_policy") != quality.get("source_policy") or
-                not baseline.get("api_contexts", {}).get("protected", {}).get("complete")):
-            continue
-        period = days.pop(key)
-        if baseline["comparable"]:
-            before = {item.asset_key: item.amount for item in row.items}
-            result[period] = sum(new_protected_units(item.asset_key, item.amount, item.first_seen_at,
-                                 before.get(item.asset_key), row.scanned_at) for item in protected)
-        if not days:
+        quality = snapshot_quality(row)
+        if quality.get("source_policy") in API_POLICIES:
+            api_rows.append(row)
+            qualities[row.id] = quality
+    newest = qualities[api_rows[0].id] if api_rows else {"source_policy": "legacy"}
+    sections = {}
+    full = None
+    for row in api_rows:
+        q = qualities[row.id]
+        if full is None and q["source_policy"] == newest["source_policy"] and row.coverage == "complete" and q["comparable"]:
+            full = row
+        for section in SECTIONS:
+            if section not in sections and displayable(q.get("api_contexts", {}).get(section, {})):
+                sections[section] = row
+        if full is not None and len(sections) == len(SECTIONS):
             break
+    baselines = {}
+    current = sections.get("protected")
+    if current and qualities[current.id]["api_contexts"]["protected"].get("complete"):
+        current_date = date.fromisoformat(beijing_iso(current.scanned_at)[:10])
+        dates = {(current_date - timedelta(days=n)).isoformat(): str(n) for n in (7, 1)}
+        for row in api_rows:
+            day = beijing_iso(row.scanned_at)[:10]
+            if day not in dates:
+                continue
+            q = qualities[row.id]
+            if q["source_policy"] != qualities[current.id]["source_policy"] or not q.get("api_contexts", {}).get("protected", {}).get("complete"):
+                continue
+            period = dates.pop(day)
+            if q["comparable"]:
+                baselines[period] = row
+            if not dates:
+                break
+    return InventorySources(sections, full, baselines, qualities, newest)
+
+
+def _protected_changes(current, baseline):
+    """逐资产的正增量；列表数字与单目标明细同用这一份口径。"""
+    before = {item.asset_key: item.amount for item in baseline.items}
+    for item in current.items:
+        if not item.is_trade_protected:
+            continue
+        evidence = row_evidence(item)
+        if "protected" not in evidence.get("api_contexts", []):
+            continue
+        delta = new_protected_units(item.asset_key, item.amount, item.first_seen_at,
+                                    before.get(item.asset_key), baseline.scanned_at)
+        if delta:
+            yield item.name, evidence.get("market_name") or item.name, delta
+
+
+def protected_additions(sources):
+    result = {"7": None, "1": None}
+    for period, baseline in sources.baselines.items():
+        result[period] = sum(count for _, _, count in _protected_changes(sources.sections["protected"], baseline))
     return result
+
+
+def target_additions(target_id, user, days):
+    rows = snapshot_query_for_user(user, target_id).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
+    sources = inventory_sources(rows)
+    current = sources.sections.get("protected")
+    baseline = sources.baselines.get(str(days))
+    report = {"target_id": target_id, "days": days, "state": "no_observation", "items": [], "total": None,
+              "observed_at": beijing_iso(current.scanned_at) if current else None, "baseline_at": None}
+    if current is None or not sources.quality[current.id]["api_contexts"]["protected"].get("complete"):
+        return report
+    if baseline is None:
+        report["state"] = "no_baseline"
+        return report
+    groups = {}
+    for name, market, count in _protected_changes(current, baseline):
+        item = groups.setdefault(market, {"name": name, "market_name": market, "count": 0})
+        item["count"] += count
+    items = sorted(groups.values(), key=lambda item: (-item["count"], item["name"], item["market_name"]))
+    report.update(items=items, total=sum(item["count"] for item in items),
+                  state="ready", baseline_at=beijing_iso(baseline.scanned_at))
+    return report
 
 
 def displayable(context):
@@ -74,21 +142,20 @@ def section_snapshot_ids(rows):
     return set(selected.values())
 
 
-def inventory_view(target_id, user, *, rows=None, include_items=True):
-    if rows is None:
-        rows = snapshot_query_for_user(user, target_id).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
-    api_rows = [row for row in rows if is_api_snapshot(row)]
-    full = complete_snapshot(api_rows)
+def inventory_view(target_id, user, *, rows=None, include_items=True, sources=None):
+    if sources is None:
+        if rows is None:
+            rows = snapshot_query_for_user(user, target_id).order_by(Snapshot.scanned_at.desc(), Snapshot.id.desc()).all()
+        sources = inventory_sources(rows)
+    full = sources.full
+    selected = sources.sections
     sections = {}
-    selected = {}
     for section in SECTIONS:
-        row = next((candidate for candidate in api_rows
-                    if displayable(snapshot_quality(candidate).get("api_contexts", {}).get(section, {}))), None)
+        row = selected.get(section)
         if not row:
             sections[section] = {"items": [], "total_items": None, "updated_at": None}
             continue
-        selected[section] = row
-        context = snapshot_quality(row)["api_contexts"][section]
+        context = sources.quality[row.id]["api_contexts"][section]
         counts = Counter()
         for item in row.items:
             if section not in row_evidence(item).get("api_contexts", []):
@@ -100,7 +167,7 @@ def inventory_view(target_id, user, *, rows=None, include_items=True):
             "items": [{"name": name, "count": count, "is_trade_protected": protected}
                       for (name, protected), count in sorted(counts.items())] if include_items else []}
     result = {"inventory_sections": sections,
-              "protected_additions": protected_additions(api_rows, selected.get("protected")),
+              "protected_additions": protected_additions(sources),
               "last_complete_snapshot_at": beijing_iso(full.scanned_at) if full else None,
               "last_complete_snapshot_id": full.id if full else None,
               "total_items": full.total_items if full else None,
@@ -108,7 +175,7 @@ def inventory_view(target_id, user, *, rows=None, include_items=True):
               "sections_same_complete_round": bool(full and len(selected) == 2 and all(
                   row.id == full.id for row in selected.values()))}
     if can_inventory_diagnostics(user):
-        result["diagnostics"] = snapshot_quality(api_rows[0]) if api_rows else {"source_policy": "legacy"}
+        result["diagnostics"] = sources.last_quality
         job = ScanJob.query.filter_by(target_id=target_id).order_by(ScanJob.id.desc()).first()
         if job and job.result_json:
             result["diagnostics"] = {**result["diagnostics"], "last_job": json.loads(job.result_json).get("diagnostics", {})}

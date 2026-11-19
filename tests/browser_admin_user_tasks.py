@@ -74,7 +74,7 @@ def run(channel, report):
                 expect(field).to_have_value("needLE")
                 field.fill("nothing_to_match")
                 field.press("Enter")
-                expect(page.locator("#adminUserStatus")).to_have_text("没有匹配的账号")
+                expect(page.locator("#adminUserStatus")).to_have_text("没有符合条件的账号")
                 page.locator("#adminUserClear").click()
                 expect(page.locator("#userPageLabel")).to_have_text("1 / 3")
                 page.locator("[data-admin-user-task=create]").click()

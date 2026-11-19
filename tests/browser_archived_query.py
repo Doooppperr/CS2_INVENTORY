@@ -100,6 +100,30 @@ def run(channel, report, baseline):
                     ),
                 )
                 page.on("pageerror", lambda error: errors.append(str(error)))
+                if not baseline:
+                    page.goto(base + "/app?view=queryHistory")
+                    expect(page.locator("#queryHistoryPage")).to_have_text("1 / 2")
+                    pages_url = "**/api/admin/queries?page=2"
+                    page.route(pages_url, lambda r: r.fulfill(status=503, json={"error": "临时中断"}))
+                    page.locator("#queryHistoryNext").focus()
+                    page.keyboard.press("Enter")
+                    status = page.locator("#historyListStatus")
+                    retry_page = page.locator("#historyListRetry")
+                    expect(status).to_contain_text("第 2 页查询历史读取失败")
+                    expect(retry_page).to_be_focused()
+                    expect(page.locator("#queryHistoryRows a")).to_have_count(0)
+                    expect(page.locator("#queryHistoryPrev")).to_be_disabled()
+                    expect(page.locator("#queryHistoryNext")).to_be_disabled()
+                    assert parse_qs(urlsplit(page.url).query)["query_page"] == ["2"]
+                    page.reload()
+                    expect(status).to_contain_text("第 2 页查询历史读取失败")
+                    expect(page.locator("#queryHistoryPage")).to_have_text("第 2 页")
+                    page.unroute(pages_url)
+                    retry_page.focus()
+                    page.keyboard.press("Enter")
+                    expect(page.locator("#queryHistoryPage")).to_have_text("2 / 2")
+                    expect(page.locator("#queryHistoryRows a").first).to_be_focused()
+                    result["list_page_failure_and_reload"] = "no stale links; same-page GET retry; focus restored"
                 page.goto(base + "/app?view=queryHistory&query_page=2")
                 expect(page.locator("#queryHistoryPage")).to_have_text("2 / 2")
                 row = page.locator(".query-history-open").first

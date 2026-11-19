@@ -9,6 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
 from . import account_sessions
+from .admin_targets import (
+    admin_target_cards,
+    detail_subscriber,
+    scoped_targets,
+    target_names,
+)
+from .admin_users import renewal_list
 from .auth import (
     USERNAME_RE,
     admin_required,
@@ -40,12 +47,14 @@ from .inventory_views import (
     complete_snapshot,
     inventory_view,
     is_api_snapshot,
+    target_additions,
 )
 from .models import (
     BEIJING_TIMEZONE,
     ActivationCode,
     ItemNameLocalization,
     LocalizationJob,
+    ScanBatch,
     ScanJob,
     Snapshot,
     SteamTarget,
@@ -58,6 +67,7 @@ from .models import (
 from .observation import snapshot_quality
 from .password_vault import recover_user_password, set_user_password
 from .query_jobs import enqueue_queries, validate_entries
+from .scheduling import SCHEDULED_ROUNDS
 from .services import (
     add_monitor,
     delete_monitor,
@@ -417,10 +427,23 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
         if not access:
             return jsonify({"error": "监控不存在"}), 404
         target, subscription = access
+        admin_view = user.role == "admin" and request.args.get("source") == "admin"
+        if admin_view:
+            try:
+                subscriber = detail_subscriber(request.args, target.id)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            except LookupError as exc:
+                return jsonify({"error": str(exc)}), 404
         history = snapshot_query_for_user(user, target.id).order_by(Snapshot.scanned_at.desc()).all()
         latest = complete_snapshot([row for row in history if is_api_snapshot(row)])
+        if admin_view:
+            monitor = target_public(target, include_latest=False, user=user)
+            monitor.update(target_names([target], user, subscriber)[target.id])
+        else:
+            monitor = target_public(target, include_latest=False, user=user) if subscription is None else monitor_public(subscription, user, include_latest=False)
         return jsonify({
-            "monitor": target_public(target, include_latest=False, user=user) if subscription is None else monitor_public(subscription, user, include_latest=False),
+            "monitor": monitor,
             "snapshot": snapshot_public(latest) if latest else None,
             "history": [snapshot_public(row, include_items=False) for row in history],
             **inventory_view(target.id, user, rows=history),
@@ -544,6 +567,14 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/admin/users")
     @admin_required
     def admin_users(_user):
+        if request.args.get("compact") == "1" or "user_state" in request.args:
+            try:
+                payload = renewal_list(request.args, utcnow())
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            response = jsonify(payload)
+            response.headers["Cache-Control"] = "no-store"
+            return response
         query = User.query
         search = request.args.get("q", "").strip()
         if search:
@@ -645,12 +676,27 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/admin/activation-codes")
     @admin_required
     def admin_activation_codes(_user):
+        status = request.args.get("status", "all")
+        q = (request.args.get("q") or "").strip().upper()[:13]
+        query = ActivationCode.query
+        if status == "unused":
+            query = query.filter(ActivationCode.revoked_at.is_(None), ActivationCode.redeemed_at.is_(None))
+        elif status == "redeemed":
+            query = query.filter(ActivationCode.revoked_at.is_(None), ActivationCode.redeemed_at.is_not(None))
+        elif status == "revoked":
+            query = query.filter(ActivationCode.revoked_at.is_not(None))
+        elif status != "all":
+            return jsonify({"error": "未知的续期码状态"}), 400
+        if q:
+            query = query.filter(ActivationCode.code_prefix.contains(q, autoescape=True))
         page, pagination = canonical_pagination(
-            ActivationCode.query.order_by(ActivationCode.created_at.desc()),
-            per_page=20,
+            query.order_by(ActivationCode.created_at.desc(), ActivationCode.id.desc()), per_page=20,
         )
+        redeemers = {row.redeemed_by_id for row in pagination.items if row.redeemed_by_id}
+        names = dict(db.session.query(User.id, User.username).filter(User.id.in_(redeemers)).all()) if redeemers else {}
         return jsonify({
-            "items": [activation_code_public(row) for row in pagination.items],
+            "items": [dict(activation_code_public(row), revoked_at=beijing_iso(row.revoked_at),
+                           redeemed_by_username=names.get(row.redeemed_by_id)) for row in pagination.items],
             "page": page,
             "pages": pagination.pages,
             "total": pagination.total,
@@ -696,17 +742,29 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/admin/targets")
     @admin_required
     def admin_targets(_user):
-        query = SteamTarget.query
-        search = request.args.get("q", "").strip()
-        if search:
-            query = query.filter(or_(
-                SteamTarget.persona_name.icontains(search, autoescape=True),
-                SteamTarget.steamid.contains(search, autoescape=True),
-            ))
-        page, pagination = canonical_pagination(
-            query.order_by(SteamTarget.created_at.desc(), SteamTarget.id.desc()), per_page=20
-        )
-        return jsonify({"items": [target_public(row, user=_user) for row in pagination.items], "page": page, "pages": pagination.pages, "total": pagination.total})
+        try:
+            query, scope, order, clock = scoped_targets(request.args, _user)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 404
+        page, pagination = canonical_pagination(query, per_page=20)
+        subscriber = scope["subscriber"]["id"] if scope["subscriber"] else None
+        return jsonify({"items": admin_target_cards(pagination.items, _user, subscriber), "scope": scope,
+                        "order": order, "order_time_field": clock, "page": page, "pages": pagination.pages, "total": pagination.total})
+
+    @app.get("/api/admin/targets/<int:target_id>/protected-additions")
+    @admin_required
+    def admin_target_additions(user, target_id):
+        days = request.args.get("days", "1")
+        if days not in {"1", "7"}:
+            return jsonify({"error": "请选择 1 天或 7 天"}), 400
+        if db.session.get(SteamTarget, target_id) is None:
+            return jsonify({"error": "监控目标不存在"}), 404
+        response = jsonify(target_additions(target_id, user, int(days)))
+        response.headers["Cache-Control"] = "private, no-store"
+        response.vary.add("Cookie")
+        return response
 
     @app.delete("/api/admin/targets/<int:target_id>")
     @admin_required
@@ -780,8 +838,37 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
 
     @app.get("/api/admin/status")
     @admin_required
-    def admin_status(_user):
+    def admin_status(user):
         running = ScanJob.query.filter(ScanJob.status.in_(["queued", "running"])).count()
+        latest = ScanBatch.query.filter_by(kind="daily").order_by(
+            ScanBatch.created_at.desc(), ScanBatch.id.desc()
+        ).first()
+        batch = None
+        if latest is not None:
+            remaining = max(0, latest.total_jobs - latest.completed_jobs - latest.failed_jobs)
+            if latest.status in {"running", "queued"}:
+                cancelled = ScanJob.query.filter_by(batch_id=latest.id, status="cancelled").count()
+                pending = max(0, remaining - cancelled)
+            else:
+                pending = 0
+            batch = {
+                "id": latest.id, "status": latest.status, "total": latest.total_jobs,
+                "completed": latest.completed_jobs, "failed": latest.failed_jobs, "remaining_jobs": pending,
+                "not_run": remaining - pending, "created_at": beijing_iso(latest.created_at),
+                "started_at": beijing_iso(latest.started_at), "finished_at": beijing_iso(latest.finished_at),
+            }
+        summary = {
+            "maintenance": maintenance_active(), "maintenance_message": state_get("maintenance_message", ""),
+            "targets": SteamTarget.query.count(), "pending_jobs": running, "latest_daily_batch": batch,
+            "scheduled_scan_hours_beijing": [hour for hour, _, _ in SCHEDULED_ROUNDS],
+            "activation_codes": {
+                "unused": ActivationCode.query.filter_by(redeemed_at=None, revoked_at=None).count(),
+                "redeemed": ActivationCode.query.filter(ActivationCode.redeemed_at.is_not(None)).count(),
+                "revoked": ActivationCode.query.filter(ActivationCode.revoked_at.is_not(None)).count(),
+            },
+        }
+        if not can_inventory_diagnostics(user):
+            return jsonify(summary)
         official_raw = state_get("official_quota_json", "")
         try:
             official = json.loads(official_raw) if official_raw else None
@@ -794,20 +881,9 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
             key = row.plan or status
             entitlement_counts[key] = entitlement_counts.get(key, 0) + 1
         return jsonify({
-            "maintenance": maintenance_active(),
-            "maintenance_message": state_get("maintenance_message", ""),
-            "targets": SteamTarget.query.count(),
-            "target_limit": app.config["MAX_TARGETS"],
-            "target_limit_enforced": False,
-            "pending_jobs": running,
-            "quota": quota_status(),
-            "official_quota": official,
-            "entitlements": entitlement_counts,
-            "activation_codes": {
-                "unused": ActivationCode.query.filter_by(redeemed_at=None, revoked_at=None).count(),
-                "redeemed": ActivationCode.query.filter(ActivationCode.redeemed_at.is_not(None)).count(),
-                "revoked": ActivationCode.query.filter(ActivationCode.revoked_at.is_not(None)).count(),
-            },
+            **summary,
+            "target_limit": app.config["MAX_TARGETS"], "target_limit_enforced": False,
+            "quota": quota_status(), "official_quota": official, "entitlements": entitlement_counts,
             "localization": {
                 "mappings": ItemNameLocalization.query.count(),
                 "pending_jobs": LocalizationJob.query.filter(LocalizationJob.status.in_(["queued", "running"])).count(),

@@ -46,22 +46,22 @@ def run(channel, report):
                 search = page.locator("#adminTargetSearch")
                 search.fill("neeDle")
                 search.press("Enter")
-                expect(page.locator("#adminTargets tbody tr")).to_have_count(1)
+                expect(page.locator("#adminTargets article")).to_have_count(1)
                 expect(page.locator("#adminTargetStatus")).to_have_text("共 1 个目标")
                 assert parse_qs(urlsplit(page.url).query)["target_page"] == ["1"]
                 page.reload()
                 expect(search).to_have_value("neeDle")
-                expect(page.locator("#adminTargets tbody tr")).to_have_count(1)
+                expect(page.locator("#adminTargets article")).to_have_count(1)
                 page.locator("#adminTargets .target-open").click()
                 page.locator("#backDetail").click()
                 expect(search).to_have_value("neeDle")
-                expect(page.locator("#adminTargets tbody tr")).to_have_count(1)
+                expect(page.locator("#adminTargets article")).to_have_count(1)
                 page.locator("#adminTargetClear").click()
                 expect(page.locator("#adminTargetStatus")).to_have_text("共 45 个目标")
                 search.fill("76561198000000001")
                 search.press("Enter")
-                expect(page.locator("#adminTargets tbody tr")).to_have_count(1)
-                expect(page.locator("#adminTargets tbody tr")).to_contain_text(
+                expect(page.locator("#adminTargets article")).to_have_count(1)
+                expect(page.locator("#adminTargets article")).to_contain_text(
                     "Needle_5% Alpha"
                 )
                 for width, height in ((320, 740), (390, 844), (1440, 960)):
@@ -69,7 +69,7 @@ def run(channel, report):
                     bounds = geometry(page, "#adminTargets")
                     views.append(bounds)
                     assert bounds["w"] <= bounds["room"] + 1
-                    assert bounds["mobileLabels"] == (width < 760)
+                    assert bounds["cardWidth"] <= bounds["room"] and bounds["labels"]
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.locator("#adminUsersTab").click()
                 expect(page.locator("#users tbody tr").first).to_be_visible()
@@ -142,6 +142,7 @@ def geometry(page, root):
     return page.locator(
         root
     ).evaluate("""(el) => {
+      if(el.id==='adminTargets'){const card=el.querySelector('article');return {section:el.id,viewport:innerWidth,room:el.clientWidth,w:el.scrollWidth,cardWidth:card.clientWidth,labels:!!card.querySelector('[data-metric=protected]')};}
       const table=el.querySelector('table'), label=table.querySelector('tbody td .admin-field-label');
       return {section:el.id,viewport:innerWidth,room:el.clientWidth,w:table.getBoundingClientRect().width,mobileLabels:!!label.getClientRects().length};}""")
 

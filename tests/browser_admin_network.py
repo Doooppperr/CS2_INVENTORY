@@ -42,7 +42,7 @@ def check_table(page, origin, section, area, prefix, stem, name):
     path = "/api/admin/" + section
     page.goto(origin + "/app?view=admin&section=" + section)
     table = page.locator("#" + area)
-    rows = table.locator("tbody tr")
+    rows = table.locator("article" if section == "targets" else "tbody tr")
     search = page.locator("#" + prefix + "Search")
     clear = page.locator("#" + prefix + "Clear")
     retry = page.locator("#" + prefix + "Retry")
