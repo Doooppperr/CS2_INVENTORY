@@ -1,0 +1,28 @@
+.admin-target-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.admin-target-form label{flex-basis:100%;font-weight:650}.admin-target-form input{flex:1 1 12rem;min-width:0}.admin-field-label{display:none}
+.admin-issued{margin:12px 0;padding:12px;background:var(--panel-soft,var(--surface));border:1px solid var(--row-border);border-radius:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.admin-issued[hidden],.admin-target-form [hidden]{display:none!important}.admin-issued code{overflow-wrap:anywhere;font-size:.95rem;user-select:all}.admin-issued [role=status]{color:var(--muted)}.admin-issued [role=status]:empty{display:none}
+.admin-table-status{color:var(--muted);font-size:.85rem;margin:6px 0 12px}
+@media(max-width:760px){
+ #adminView .table-wrap{overflow:visible}
+ #adminView .data-table{display:block;min-width:0;width:100%}
+ #adminView .data-table thead{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+ #adminView .data-table tbody{display:grid;gap:12px}
+ #adminView .data-table tr{min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--row-border);border-radius:10px;overflow:hidden}
+ #adminView .data-table td{display:block;min-width:0;padding:7px 9px;border:0;overflow-wrap:anywhere;font-size:.87rem}
+ #adminView .data-table td:first-child{grid-column:1/-1;border-bottom:1px solid var(--row-border);font-size:1rem}
+ #adminView .data-table td:last-child{grid-column:1/-1;border-top:1px solid var(--row-border)}
+ #adminView .data-table td.password-cell,#adminView #users td:nth-child(3),#adminView #activationCodes td:nth-child(5){grid-column:1/-1}
+ #adminView .admin-field-label{display:block;font-size:.74rem;font-weight:600;color:var(--muted);margin-bottom:4px}
+ #adminView .data-table .actions{display:flex;gap:6px;flex-wrap:wrap}
+ #adminView .data-table .actions button{min-height:36px}
+ .admin-target-form input{flex-basis:100%;height:40px}
+}
+
+.admin-user-tasks{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.admin-user-tasks button{min-height:40px}.admin-user-tasks button[aria-pressed=true]{border-color:var(--focus);color:var(--text);background:var(--panel-2,var(--row-border))}
+#adminUsersPage [data-user-panel][hidden]{display:none!important}
+.admin-password-toggle{margin-top:6px}
+
+.admin-table-feedback{display:flex;align-items:center;gap:10px;min-height:2rem;margin:4px 0 8px}
+.admin-table-feedback .admin-table-status{margin:0}
+.admin-table-feedback button[hidden]{display:none!important}
+#adminTargets[aria-busy="true"],#users[aria-busy="true"]{min-height:4rem;border-block-start:1px solid var(--row-border)}

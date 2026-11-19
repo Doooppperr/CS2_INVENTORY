@@ -124,7 +124,8 @@ class EntitlementTests(unittest.TestCase):
         self.assertEqual(console.count('data-section="'), 3)
         self.assertNotIn('id="adminCodesTab"', console)
         self.assertIn("['overview','users','targets']", console)
-        self.assertIn("Promise.all([api(`api/admin/users", console)
+        self.assertIn('id="adminUserSearch"', console)
+        self.assertIn("api/admin/activation-codes", console)
         self.assertIn('id="createUserForm"', console)
         self.assertIn("api/admin/users',{method:'POST'", console)
         self.assertNotIn('id="registerTab"', console)
@@ -214,12 +215,20 @@ class EntitlementTests(unittest.TestCase):
         self.assertIn(".notice-grid{grid-template-columns:repeat(2,minmax(0,1fr))", landing)
         self.assertIn(".grid,.notice-grid{grid-template-columns:1fr}", landing)
 
-    def test_logged_in_landing_has_one_console_action_and_detail_back_url_has_no_slash_404(self):
-        landing = self.client.get("/").get_data(as_text=True)
-        self.assertNotIn('>获取套餐</a>', landing)
-        self.assertIn("const [primary,...duplicates]=document.querySelectorAll('[data-auth]')", landing)
-        self.assertIn("duplicates.forEach(b=>b.hidden=true)", landing)
+    def test_landing_has_a_dashboard_link_in_header_and_hero_for_returning_users(self):
+        anonymous = self.client.get("/")
+        self.assertNotIn('>获取套餐</a>', anonymous.get_data(as_text=True))
+        self.assertIn('data-auth="login">登录进入平台', anonymous.get_data(as_text=True))
+        self.assertNotIn('data-dashboard-entry href=', anonymous.get_data(as_text=True))
+        self.login()
+        returning = self.client.get("/")
+        self.assertEqual(returning.get_data(as_text=True).count('data-dashboard-entry href="/app/dashboard"'), 2)
+        self.assertNotIn('data-auth="login">', returning.get_data(as_text=True))
+        self.assertTrue(returning.cache_control.private)
+        self.assertTrue(returning.cache_control.no_store)
+        self.assertIn("Cookie", returning.vary)
 
+    def test_detail_back_url_has_no_slash_404(self):
         console = self.client.get("/app").get_data(as_text=True) + self.client.get("/static/inventory.js").get_data(as_text=True)
         self.assertIn("value.startsWith('?')?`app${value}`:`app/${value}`", console)
         self.assertEqual(self.client.get("/app/").status_code, 200)

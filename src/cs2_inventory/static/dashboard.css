@@ -30,9 +30,9 @@
 .trend-panel{position:relative;overflow:hidden}.trend-legend{display:flex;gap:28px;margin:24px 0 4px;font-size:13px}.trend-legend>span{display:flex;align-items:center;gap:8px;color:var(--muted)}.trend-legend b{font-size:22px;color:var(--text);font-variant-numeric:tabular-nums}.trend-legend i{height:8px;width:8px;border-radius:50%}.legend-up{background:var(--chart-up)}.legend-down{background:var(--chart-down)}
 .trend-chart{min-height:230px}.trend-chart svg{display:block;width:100%;max-height:310px;overflow:visible}.chart-grid{stroke:var(--row-border);stroke-width:1;stroke-dasharray:4 5}.chart-axis{fill:var(--muted);font:12px "Segoe UI","Microsoft YaHei",sans-serif}.chart-line{fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}.chart-up{stroke:var(--chart-up)}.chart-down{stroke:var(--chart-down)}.chart-dot{fill:var(--panel);stroke-width:2;vector-effect:non-scaling-stroke}.chart-guide{opacity:0;stroke:var(--muted);stroke-dasharray:4 5;vector-effect:non-scaling-stroke}.chart-day:hover .chart-guide,.chart-day:focus .chart-guide{opacity:.6}.chart-day:focus{outline:none}.trend-tooltip{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);max-width:calc(100% - 30px);width:max-content;padding:9px 12px;background:var(--panel2);color:var(--text);border:1px solid var(--row-border);border-radius:8px;font-size:12px;pointer-events:none;z-index:1}
 .chart-empty,.ranking-empty{display:grid;place-items:center;min-height:230px;color:var(--muted);font-size:14px}.ranking-empty{min-height:280px}
-.ranking-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.dashboard-shell .ranking-panel{margin:0;padding:24px;min-width:0}.ranking-list{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:12px}.rank-item{display:flex;align-items:flex-start;gap:10px;padding:14px;background:var(--panel2);border-radius:10px}.rank-index{width:22px;height:22px;flex-shrink:0;display:grid;place-items:center;border-radius:50%;font-size:11px;font-weight:700;background:var(--row-border);color:var(--muted);margin-top:1px}.rank-index-1{background:var(--blue);color:var(--on-accent,#fff)}.rank-index-2,.rank-index-3{color:var(--text)}.rank-content{min-width:0;flex:1}.rank-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.rank-title h3{font-size:13px;line-height:1.6;font-weight:600;margin:0;overflow-wrap:anywhere}.rank-title b{font-size:18px;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3}.rank-up{color:var(--chart-up)}.rank-down{color:var(--chart-down)}.rank-track{height:3px;border-radius:3px;background:var(--row-border);margin:10px 0 12px;overflow:hidden}.rank-track span{display:block;width:var(--share);height:100%;opacity:.6}.rank-fill-up{background:var(--chart-up)}.rank-fill-down{background:var(--chart-down)}.rank-accounts{display:grid;gap:7px}.rank-account{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:baseline;font-size:12px}.rank-account a{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none;color:var(--muted)}.rank-account a:hover{color:var(--text);text-decoration:underline}.rank-account>span{white-space:nowrap;font-variant-numeric:tabular-nums}.rank-holding{color:var(--muted)}.rank-accounts details summary{font-size:11px;color:var(--muted);padding:0;font-weight:400}.rank-accounts details[open]{display:grid;gap:7px}.rank-accounts details .rank-account{margin-top:7px}.daily-details{margin-top:28px}.dashboard-shell .daily-details>summary{font-size:14px;color:var(--muted);padding:12px 0}.daily-details .dashboard-stats{margin-top:14px}.daily-details .stat{border:1px solid var(--row-border);box-shadow:none;border-radius:10px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.ranking-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.dashboard-shell .ranking-panel{margin:0;padding:24px;min-width:0}.ranking-list{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:12px}.rank-item{display:flex;align-items:flex-start;gap:10px;padding:14px;background:var(--panel2);border-radius:10px}.rank-index{width:22px;height:22px;flex-shrink:0;display:grid;place-items:center;border-radius:50%;font-size:12px;font-weight:700;background:var(--row-border);color:var(--muted);margin-top:1px}.rank-index-1{background:var(--blue);color:var(--button-text)}.rank-index-2,.rank-index-3{color:var(--text)}.rank-content{min-width:0;flex:1}.rank-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.rank-title h3{font-size:13px;line-height:1.6;font-weight:600;margin:0;overflow-wrap:anywhere}.rank-title b{font-size:18px;font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3}.rank-up{color:var(--chart-up)}.rank-down{color:var(--chart-down)}.rank-track{height:3px;border-radius:3px;background:var(--row-border);margin:10px 0 12px;overflow:hidden}.rank-track span{display:block;width:var(--share);height:100%;opacity:.6}.rank-fill-up{background:var(--chart-up)}.rank-fill-down{background:var(--chart-down)}.rank-accounts{display:grid;gap:7px}.rank-account{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:baseline;font-size:12px}.rank-account a{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none;color:var(--muted)}.rank-account a:hover{color:var(--text);text-decoration:underline}.rank-account>span{white-space:nowrap;font-variant-numeric:tabular-nums}.rank-holding{color:var(--muted)}.rank-accounts details summary{font-size:11px;color:var(--muted);padding:0;font-weight:400}.rank-accounts details[open]{display:grid;gap:7px}.rank-accounts details .rank-account{margin-top:7px}.daily-details{margin-top:28px}.dashboard-shell .daily-details>summary{font-size:14px;color:var(--muted);padding:12px 0}.daily-details .dashboard-stats{margin-top:14px}.daily-details .stat{border:1px solid var(--row-border);box-shadow:none;border-radius:10px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:800px){.ranking-grid{grid-template-columns:1fr}.trend-chart{min-height:190px}.trend-chart svg{min-height:190px}.overview-heading .meta{font-size:11px}.dashboard-shell .ranking-panel{padding:18px}.rank-item{padding:12px}}
-@media(max-width:480px){.dashboard-shell{padding:14px}.overview-toolbar{gap:10px}.overview-controls{gap:8px}.overview-controls label{gap:5px}.overview-controls input,.overview-controls select{padding:8px;font-size:12px}.overview-controls input{width:132px}.overview-heading{align-items:flex-start}.overview-heading h2{font-size:16px}.overview-heading .meta{text-align:right;line-height:1.6}.trend-legend{gap:20px;margin-top:20px}.trend-legend b{font-size:20px}.trend-chart{overflow-x:auto}.trend-chart svg{min-width:0}.rank-title{gap:10px}.rank-title b{font-size:17px}.rank-title h3{font-size:12px}.rank-account{gap:8px;font-size:11px}.rank-holding{font-size:10px}.trend-tooltip{font-size:10px}.dashboard-shell .ranking-panel{padding:16px 12px}}
+@media(max-width:480px){.dashboard-shell{padding:14px}.overview-toolbar{gap:10px}.overview-controls{gap:8px}.overview-controls label{gap:5px}.overview-controls input,.overview-controls select{padding:8px;font-size:12px}.overview-controls input{width:132px}.overview-heading{align-items:flex-start}.overview-heading h2{font-size:16px}.overview-heading .meta{text-align:right;line-height:1.6}.trend-legend{gap:20px;margin-top:20px}.trend-legend b{font-size:20px}.trend-chart{overflow-x:auto}.trend-chart svg{min-width:0}.rank-title{gap:10px}.rank-title b{font-size:17px}.rank-title h3{font-size:14px}.rank-account{gap:8px;font-size:12px}.rank-holding{font-size:12px}.trend-tooltip{font-size:10px}.dashboard-shell .ranking-panel{padding:16px 12px}}
 
 body{background-image:none}body::before,body::after{display:none}
 
@@ -71,7 +71,8 @@ body{background-image:none}body::before,body::after{display:none}
 .dashboard-shell .change-item>summary{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(130px,1fr) 80px 16px;gap:24px;align-items:center;list-style:none;padding:14px 10px;font-size:13px;font-weight:500;border-radius:8px}
 .change-item>summary::-webkit-details-marker{display:none}.change-item>summary:hover{background:var(--panel2)}
 .change-name{overflow-wrap:anywhere}.change-name small{display:block;font-size:11px;color:var(--muted);margin-top:5px;font-weight:400}
-.change-bars{display:grid;gap:5px}.change-bar{display:grid;grid-template-columns:minmax(0,1fr) 54px;align-items:center;gap:10px}
+.change-bars{display:grid;gap:5px}.change-bar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:7px}
+.change-direction{color:var(--muted);font-size:12px}.change-track{min-width:0}
 .change-track{height:6px;background:var(--row-border);border-radius:3px;overflow:hidden}.change-track i{display:block;height:100%;border-radius:3px}
 .change-fill-up{background:var(--chart-up)}.change-fill-down{background:var(--chart-down)}
 .change-bar b{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;font-weight:500}
@@ -90,8 +91,12 @@ body{background-image:none}body::before,body::after{display:none}
   .advanced-filters{position:static}.advanced-filters fieldset{top:100%;right:0;margin-top:8px;width:100%;max-width:none}
   .filter-rule{gap:8px}.filter-rule .rule-check{width:100%}.filter-rule input[type=number]{height:34px;min-height:34px}
   .dashboard-shell .results-panel{padding:14px 10px}
-  .dashboard-shell .change-item>summary{grid-template-columns:minmax(0,1fr) 60px 12px;gap:10px;padding:12px 4px}
-  .change-name{grid-column:1/-1;padding-right:14px}.change-bars{grid-column:1;grid-row:2}.change-net{grid-column:2;grid-row:2}.change-chevron{grid-column:3;grid-row:1}
+  .dashboard-shell .change-item>summary{grid-template:"name net toggle" auto "bars bars bars" auto / minmax(0,1fr) auto 12px;gap:7px 9px;padding:12px 4px}
+  .change-name{grid-area:name;font-size:14px;font-weight:650;line-height:1.45}.change-name small{font-size:12px;margin-top:2px}
+  .change-net{grid-area:net;align-self:start}.change-net small{font-size:12px}.change-net b{line-height:1.25}
+  .change-chevron{grid-area:toggle;font-size:16px;line-height:1}
+  .change-bars{grid-area:bars;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.change-bar{grid-template-columns:auto auto minmax(0,1fr);gap:5px}
+  .change-bar b{grid-area:1/2;font-weight:650}.change-bar .change-track{grid-area:1/3;height:4px}
   .change-accounts{grid-template-columns:1fr}.change-expanded{padding:0 4px 12px}
 }
 /* 优先呈现本轮新增；历史趋势与日报保留独立的时间口径。 */
@@ -127,6 +132,9 @@ body{background-image:none}body::before,body::after{display:none}
 .signal-tools input {flex:1 1 60%;width:0}
 .signal-tools select {max-width:44%;width:auto}
 #signalNotice {color:var(--muted);font-size:14px;margin:14px 0}
+.signal-filter-feedback{display:flex;align-items:center;gap:8px 12px}
+.signal-filter-feedback #signalNotice{flex:1;min-width:0;margin:8px 0;font-size:13px;overflow-wrap:anywhere}
+.signal-filter-feedback #signalClear{flex:none;margin:0 0 0 auto;min-height:40px;padding:5px 9px}
 .signal-item {border-bottom:1px solid var(--row-border)}
 .dashboard-shell .signal-item>summary {list-style:none;display:grid;grid-template-columns:minmax(0,1fr) auto 14px;align-items:center;gap:12px;padding:11px 4px;min-height:50px}
 .signal-item>summary::-webkit-details-marker {display:none}
@@ -159,3 +167,42 @@ body{background-image:none}body::before,body::after{display:none}
 }
 
 #followLatest {font-size:13px;padding:8px 12px;min-height:38px}
+
+/* 按饰品找货，按账号看加仓：两种汇总共享同一轮数据和筛选。 */
+.signal-views {display:inline-flex;flex:none;align-items:center;border:1px solid var(--row-border);border-radius:10px;background:var(--panel2);padding:3px;gap:2px}
+.dashboard-shell .signal-views button {border:0;box-shadow:none;background:transparent;color:var(--muted);min-height:34px;padding:4px 10px;white-space:nowrap;border-radius:7px;font:inherit;font-size:13px;font-weight:600}
+.dashboard-shell .signal-views button[aria-pressed="true"] {background:var(--text);color:var(--panel)}
+.dashboard-shell .signal-views button:focus-visible {outline:2px solid var(--focus);outline-offset:1px}
+@media(max-width:760px) {
+  .signal-tools {display:grid;grid-template-columns:minmax(0,1fr) auto}
+  .signal-tools .signal-views {grid-column:1/-1;justify-self:start}
+  .signal-tools input {width:100%;min-width:0}
+  .signal-tools select {max-width:100%;width:100%;min-width:0}
+}
+@media(max-width:420px) {.signal-tools {grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}}
+
+.report-scope{display:grid;gap:3px}.report-scope .meta{font-size:12px}
+.dashboard-jumps{position:sticky;top:0;z-index:5;display:flex;gap:4px;align-items:center;padding:3px 4px;margin:0 0 10px;border:1px solid var(--row-border);border-radius:10px;background:var(--panel)}
+.dashboard-jumps a{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:0 12px;border-radius:7px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap}
+.dashboard-jumps a:hover,.dashboard-jumps a:focus-visible{background:var(--panel2);color:var(--blue)}.dashboard-jumps a:focus-visible,.chart-day:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+#trendHeading,#signalHeading,#increaseHeading,#decreaseHeading,#dailyDetails>summary{scroll-margin-block-start:54px}
+.chart-day{cursor:pointer;touch-action:manipulation}.chart-day[aria-pressed=true] .chart-guide,.chart-day:focus-visible .chart-guide{opacity:1;stroke:var(--text);stroke-width:1.5}
+.trend-readout{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding-top:6px;border-top:1px solid var(--row-border);color:var(--muted);font-size:12px;line-height:1.6;min-height:36px}.trend-readout:has(output:empty){display:none}
+.trend-readout button{padding:3px 10px;min-height:36px;font-size:12px}
+.trend-readout output span{display:inline-block}
+.rank-account{align-items:center}.rank-account a{display:flex;align-items:center;min-height:30px;color:var(--text)}.rank-account a span{overflow:hidden;text-overflow:ellipsis}.rank-account a:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+@media(max-width:680px){
+ .dashboard-jumps{gap:0;justify-content:space-around}.dashboard-jumps a{min-height:40px;padding:0 5px;font-size:12px}
+ .rank-account a{min-height:44px}.rank-accounts{gap:0}.rank-accounts details .rank-account{margin-top:0}
+ .rank-track{margin:7px 0 2px}.rank-accounts details summary{display:list-item;line-height:42px;padding:0}
+ .rank-account+.rank-account{border-top:1px solid var(--row-border)}.trend-readout button{min-height:40px}
+}
+.report-recovery p:empty{display:none}#overviewRetry:not([hidden]),#dailyRetry:not([hidden]){margin:4px 0 12px}
+
+.day-selector,.day-arrows{display:flex;align-items:center;gap:4px}.day-selector>label{margin-right:4px}.day-arrows button{min-width:34px;min-height:38px;padding:0;border-radius:6px;background:var(--panel);color:var(--text);font:600 22px/1 system-ui}.day-arrows button:disabled{opacity:.4;cursor:default}
+.slot-control{position:relative}.slot-control>label{margin:0}.slot-rail{display:none}.slot-control.enhanced .slot-rail{display:flex;border:1px solid var(--row-border);padding:2px;border-radius:9px;background:var(--panel2)}
+.slot-control.enhanced select{position:absolute;clip-path:inset(50%);width:1px;height:1px;min-width:0;min-height:0;border:0;padding:0;overflow:hidden}
+.slot-control.enhanced:has(select:focus-visible) .slot-rail{outline:2px solid var(--focus);outline-offset:2px}
+.dashboard-shell .slot-rail button{border:0;border-radius:6px;padding:6px 9px;min-height:33px;background:transparent;color:var(--muted);font-size:13px;box-shadow:none}
+.dashboard-shell .slot-rail button.selected{background:var(--text);color:var(--panel);font-weight:700}
+@media(max-width:680px){.signal-head{flex-wrap:wrap;gap:8px}.signal-head .slot-control>label{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}.dashboard-shell .slot-rail button{min-height:40px;padding:6px 8px}.day-selector>label{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}.day-arrows button{min-width:38px;min-height:40px}}

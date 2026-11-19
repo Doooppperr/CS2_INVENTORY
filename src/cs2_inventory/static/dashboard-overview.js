@@ -6,12 +6,12 @@
   const num=value=>Number.isFinite(value)?value.toLocaleString('zh-CN'):'—';
   const delta=(value,sign)=>Number.isFinite(value)?`${sign}${num(value)}`:'—';
   const fmt=value=>value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—';
-  let currentData=null;
+  let currentData=null,selected=-1;
   function clear(){
-    currentData=null;
+    currentData=null;selected=-1;
     for(const id of ['trendLegend','trendChart','increaseRanking','decreaseRanking'])$(id).replaceChildren();
     $('overviewUpdated').textContent='';$('overviewCoverage').textContent='';
-    $('trendTooltip').classList.add('hidden');$('trendTooltip').textContent='';
+    $('trendTooltip').textContent='';$('trendOpenDay').hidden=true;
     document.querySelectorAll('.rank-period').forEach(el=>el.textContent='');
   }
   function drawTrend(data){
@@ -35,22 +35,40 @@
     points.forEach((point,i)=>{
       const label=`${point.date}，加仓 ${delta(point.increase,'+')}，减仓 ${delta(point.decrease,'−')}，${point.compared_accounts}/${point.total_accounts} 个账号可对比`;
       const half=(width-left-right)/Math.max(points.length-1,1)/2,start=Math.max(left-12,x(i)-half),end=Math.min(width-right+12,x(i)+half);
-      svg+=`<text class="chart-axis" x="${x(i)}" y="${height-15}" text-anchor="middle">${esc(point.date.slice(5).replace('-','/'))}</text><g class="chart-day" tabindex="0" data-day="${i}" role="group" aria-label="${esc(label)}"><line class="chart-guide" x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${floor}"/><rect x="${start}" y="${top}" width="${end-start}" height="${floor-top}" fill="transparent"/><title>${esc(label)}</title></g>`;
+      svg+=`<text class="chart-axis" x="${x(i)}" y="${height-15}" text-anchor="middle">${esc(point.date.slice(5).replace('-','/'))}</text><g class="chart-day" tabindex="${i===(selected<0?points.length-1:selected)?0:-1}" data-day="${i}" role="button" aria-pressed="${i===selected}" aria-label="${esc(label)}"><line class="chart-guide" x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${floor}"/><rect x="${start}" y="${top}" width="${end-start}" height="${height-top-3}" fill="transparent"/><title>${esc(label)}</title></g>`;
     });
     $('trendChart').innerHTML=svg+'</svg>';
-    $('trendChart').querySelectorAll('[data-day]').forEach(el=>{
-      const show=()=>{const point=points[Number(el.dataset.day)];$('trendTooltip').textContent=`${point.date} · 加仓 ${delta(point.increase,'+')} · 减仓 ${delta(point.decrease,'−')} · ${point.compared_accounts}/${point.total_accounts} 个账号可对比`;$('trendTooltip').classList.remove('hidden');};
-      const hide=()=>$('trendTooltip').classList.add('hidden');
-      el.addEventListener('pointerenter',show);el.addEventListener('focus',show);el.addEventListener('pointerleave',hide);el.addEventListener('blur',hide);
+    const buttons=[...$('trendChart').querySelectorAll('[data-day]')], action=$('trendOpenDay');
+    function show(i){
+      const point=points[i];
+      if(point)$('trendTooltip').innerHTML=[point.date,`加仓 ${delta(point.increase,'+')}`,`减仓 ${delta(point.decrease,'−')}`,`${point.compared_accounts}/${point.total_accounts} 个账号可对比`].map(part=>`<span>${esc(part)}</span>`).join(' · ');
+      else $('trendTooltip').textContent='选择日期查看当日明细';
+    }
+    function select(i){
+      selected=i;const date=points[i].date,hasReport=date>=$('date').min&&date<=$('date').max;
+      buttons.forEach((el,j)=>{el.setAttribute('aria-pressed',String(i===j));el.tabIndex=i===j?0:-1;});
+      action.dataset.date=date;action.textContent=`查看 ${date.slice(5).replace('-','/')} 明细 →`;action.hidden=!hasReport;
+      show(i);if(!hasReport)$('trendTooltip').textContent+=' · 超出明细保留期';
+    }
+    buttons.forEach((el,i)=>{
+      const preview=()=>{if(selected<0)show(i);},leave=()=>{if(selected<0)show(-1);};
+      el.addEventListener('pointerenter',preview);el.addEventListener('focus',preview);el.addEventListener('pointerleave',leave);el.addEventListener('blur',leave);
+      el.addEventListener('click',()=>select(i));
+      el.addEventListener('keydown',e=>{
+        if(e.key==='Enter'||e.key===' '){e.preventDefault();select(i);return;}
+        const next={ArrowLeft:Math.max(0,i-1),ArrowRight:Math.min(buttons.length-1,i+1),Home:0,End:buttons.length-1}[e.key];
+        if(next!==undefined){e.preventDefault();select(next);buttons[next].focus();}
+      });
     });
+    if(selected<0)show(-1);else select(selected);
   }
   function renderRanking(items,direction,available){
     const up=direction==='increase',sign=up?'+':'−',tone=up?'up':'down';
     if(!items.length)return `<div class="ranking-empty">${available?`暂无${up?'加仓':'减仓'}记录`:'暂无可对比记录'}</div>`;
     const base=$('dashboard').dataset.app.replace(/\/$/,'');
     const back=typeof location==='undefined'?base+'/dashboard':location.pathname+location.search;
-    const account=row=>`<div class="rank-account"><a href="${esc(`${base}/monitors/${encodeURIComponent(row.target_id)}?source=dashboard&return_to=${encodeURIComponent(back)}`)}" title="${esc(row.label)}">${esc(row.label)}</a><span class="rank-${tone}">${delta(row.count,sign)}</span><span class="rank-holding" title="${esc(fmt(row.holding_at))}">持有 ${num(row.holding)}</span></div>`;
-    return `<ol class="ranking-list">${items.map((item,i)=>`<li class="rank-item" style="--share:${Math.round(item.count/items[0].count*100)}%"><span class="rank-index rank-index-${i+1}">${i+1}</span><div class="rank-content"><div class="rank-title"><h3>${esc(item.name)}</h3><b class="rank-${tone}">${delta(item.count,sign)}</b></div><div class="rank-track"><span class="rank-fill-${tone}"></span></div><div class="rank-accounts">${item.accounts.slice(0,3).map(account).join('')}${item.accounts.length>3?`<details><summary>另 ${item.accounts.length-3} 个账号</summary>${item.accounts.slice(3).map(account).join('')}</details>`:''}</div></div></li>`).join('')}</ol>`;
+    const account=(row,item)=>`<div class="rank-account"><a data-target="${esc(row.target_id)}" href="${esc(`${base}/monitors/${encodeURIComponent(row.target_id)}?source=dashboard&item=${encodeURIComponent(item.name)}&return_to=${encodeURIComponent(back)}`)}" title="${esc(row.label)}" aria-label="查看${esc(row.label)}的${esc(item.name)}库存"><span>${esc(row.label)}</span></a><span class="rank-${tone}">${delta(row.count,sign)}</span><span class="rank-holding" title="${esc(fmt(row.holding_at))}">持有 ${num(row.holding)}</span></div>`;
+    return `<ol class="ranking-list">${items.map((item,i)=>`<li class="rank-item" data-rank="${i}" style="--share:${Math.round(item.count/items[0].count*100)}%"><span class="rank-index rank-index-${i+1}">${i+1}</span><div class="rank-content"><div class="rank-title"><h3>${esc(item.name)}</h3><b class="rank-${tone}">${delta(item.count,sign)}</b></div><div class="rank-track"><span class="rank-fill-${tone}"></span></div><div class="rank-accounts">${item.accounts.slice(0,3).map(row=>account(row,item)).join('')}${item.accounts.length>3?`<details><summary>另 ${item.accounts.length-3} 个账号</summary>${item.accounts.slice(3).map(row=>account(row,item)).join('')}</details>`:''}</div></div></li>`).join('')}</ol>`;
   }
   function render(data){
     clear();currentData=data;const summary=data.summary;
@@ -62,6 +80,6 @@
     $('increaseRanking').innerHTML=renderRanking(data.rankings.increase,'increase',summary.available_days);
     $('decreaseRanking').innerHTML=renderRanking(data.rankings.decrease,'decrease',summary.available_days);
   }
-  let resizeTimer;addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(currentData){$('trendTooltip').classList.add('hidden');drawTrend(currentData);}},120);});
+  let resizeTimer;addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(currentData)drawTrend(currentData);},120);});
   window.InventoryOverview={render,clear};
 })();

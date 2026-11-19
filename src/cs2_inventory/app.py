@@ -143,7 +143,11 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/")
     def index():
         csrf_token()
-        return render_template("landing.html")
+        response = app.make_response(render_template("landing.html", signed_in=current_user() is not None))
+        response.cache_control.private = True
+        response.cache_control.no_store = True
+        response.vary.add("Cookie")
+        return response
 
     @app.get("/app", strict_slashes=False)
     def application():
@@ -540,7 +544,11 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/admin/users")
     @admin_required
     def admin_users(_user):
-        page, pagination = canonical_pagination(User.query.order_by(User.created_at.desc()), per_page=20)
+        query = User.query
+        search = request.args.get("q", "").strip()
+        if search:
+            query = query.filter(User.username.icontains(search, autoescape=True))
+        page, pagination = canonical_pagination(query.order_by(User.created_at.desc(), User.id.desc()), per_page=20)
         items = []
         for row in pagination.items:
             data = user_json(row)
@@ -688,7 +696,16 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
     @app.get("/api/admin/targets")
     @admin_required
     def admin_targets(_user):
-        page, pagination = canonical_pagination(SteamTarget.query.order_by(SteamTarget.created_at.desc()), per_page=20)
+        query = SteamTarget.query
+        search = request.args.get("q", "").strip()
+        if search:
+            query = query.filter(or_(
+                SteamTarget.persona_name.icontains(search, autoescape=True),
+                SteamTarget.steamid.contains(search, autoescape=True),
+            ))
+        page, pagination = canonical_pagination(
+            query.order_by(SteamTarget.created_at.desc(), SteamTarget.id.desc()), per_page=20
+        )
         return jsonify({"items": [target_public(row, user=_user) for row in pagination.items], "page": page, "pages": pagination.pages, "total": pagination.total})
 
     @app.delete("/api/admin/targets/<int:target_id>")
@@ -740,6 +757,26 @@ def create_app(config: type[Config] | dict | None = None) -> Flask:
                        "created_at": beijing_iso(row.created_at), "target_id": row.target_id,
                        "alias": (json.loads(row.result_json or "{}")).get("query_alias", "")}
                       for row in pagination.items]})
+
+    @app.get("/api/admin/queries/<int:job_id>")
+    @super_admin_required
+    def archived_query(user, job_id):
+        job = ScanJob.query.filter(
+            ScanJob.id == job_id, ScanJob.requested_by == user.id,
+            ScanJob.kind.in_(["manual", "instant"]),
+        ).first()
+        if job is None:
+            return jsonify({"error": "没有这条查询记录"}), 404
+        if job.expires_at and job.expires_at.replace(tzinfo=timezone.utc) <= utcnow():
+            return jsonify({"error": "这条查询结果已过期"}), 410
+        result = json.loads(job.result_json or "{}")
+        return jsonify({
+            "id": job.id, "alias": result.get("query_alias"), "steamid": job.steamid,
+            "created_at": beijing_iso(job.created_at), "finished_at": beijing_iso(job.finished_at),
+            "status": job.status, "target_id": job.target_id, "error": job.error,
+            "inventory_sections": result.get("inventory_sections"),
+            "diagnostics": result.get("diagnostics") or result.get("quality"),
+        })
 
     @app.get("/api/admin/status")
     @admin_required

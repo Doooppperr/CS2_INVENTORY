@@ -7,6 +7,40 @@
   const monitorUrl = id => `${root.dataset.app.replace(/\/$/,'')}/monitors/${encodeURIComponent(id)}`;
   let page=1, pages=1, generation=0, loading=false, diagnostics=false, ready=false, overviewRequest=null;
   const checkInterval=5*60*1000;
+  const enteredRoute=location.pathname+location.search;
+  let rankReading=history.state?.rankReading, rankMoved=false, readerId, shownOverview, dateLoad;
+  if(rankReading){
+    history.scrollRestoration='manual';
+    for(const name of ['wheel','touchstart','pointerdown','keydown'])addEventListener(name,()=>{rankMoved=true;},{once:true,passive:true});
+  }
+  function followInventory(event,link,progress){
+    if(event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||link.target==='_blank')return;
+    const token=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2),dest=new URL(link.href);
+    history.replaceState({...history.state,...progress},'');
+    dest.searchParams.set('return_to',location.pathname+location.search);
+    try{sessionStorage.setItem('cs2:feed-return',token);dest.searchParams.set('feed_from',token);}catch{}
+    event.preventDefault();location.assign(dest);
+  }
+  document.querySelector('.ranking-grid').addEventListener('click',event=>{
+    const link=event.target.closest('.rank-account a');
+    if(!link||!shownOverview)return;
+    const {scope,days,end_date,updated_at}=shownOverview, list=link.closest('.ranking-list'),row=link.closest('.rank-item');
+    followInventory(event,link,{rankReading:{user:readerId,scope,days,end_date,updated_at,list:list.parentElement.id,
+      rank:Number(row.dataset.rank),target:link.dataset.target,expanded:[...list.children].flatMap((r,i)=>r.querySelector('details[open]')?[i]:[]),
+      offset:link.getBoundingClientRect().top}});
+  });
+  function restoreRank(){
+    const saved=rankReading;rankReading=null;
+    if(!saved)return;
+    const data=shownOverview;
+    if(!data||rankMoved||enteredRoute!==location.pathname+location.search||saved.user!==readerId||saved.scope!==data.scope||saved.days!==data.days||saved.end_date!==data.end_date||saved.updated_at!==data.updated_at){history.scrollRestoration='auto';return;}
+    const rows=$(saved.list).querySelectorAll('.rank-item'),link=[...(rows[saved.rank]?.querySelectorAll('.rank-account a')||[])].find(a=>a.dataset.target===saved.target);
+    for(const i of saved.expanded){const extra=rows[i]?.querySelector('details');if(extra)extra.open=true;}
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      if(link&&!rankMoved){link.focus({preventScroll:true});scrollBy({top:link.getBoundingClientRect().top-saved.offset,behavior:'instant'});}
+      history.scrollRestoration='auto';
+    }));
+  }
   let following=false,lastCheck=0,checking=false,ticker;
   const stateNames={ready:'校验通过',partial:'待核验',private:'已私密',failed:'扫描失败',pending:'待扫描 / 扫描中',missing:'没有早间记录'};
   const clearDaily = () => {
@@ -22,6 +56,8 @@
   }
   function parameters(){const values=new URLSearchParams(new FormData($('filters')));values.set('page',String(page));return values;}
   function syncUrl(){
+    const day=$('date');$('dayBack').disabled=!day.value||day.value<=day.min;$('dayForward').disabled=!day.value||day.value>=day.max;
+    window.ProtectedFeed.syncSlot();
     const values=parameters(), defaults={section:'signals',sort:'accounts',direction:'all',q:'',min_accounts:'2',min_per_account:'1',min_single:'2',match:'any',days:'7',page:'1'};
     for(const [key,value] of Object.entries(defaults))if(values.get(key)===value)values.delete(key);
     if(following)values.delete('date');
@@ -33,12 +69,15 @@
     overviewRequest?.abort();
     const {signal}=overviewRequest=new AbortController();
     const query=new URLSearchParams({date:$('date').value,scope:$('scope').value,days:$('overviewDays').value});
-    $('error').textContent='';window.InventoryOverview.clear();
+    shownOverview=null;$('error').textContent='';$('overviewRetry').hidden=true;
+    $('overviewScopeCaption').textContent=$('scope').value==='all'?'全平台监控':'我的全部监控';window.InventoryOverview.clear();
     try {
       const data=await get(`${root.dataset.overview}?${query}`,{signal});
-      if(!signal.aborted)window.InventoryOverview.render(data);
-    }catch(error){if(!signal.aborted)$('error').textContent=`趋势读取失败：${error.message}`;}
+      if(!signal.aborted){shownOverview=data;window.InventoryOverview.render(data);}
+    }catch(error){if(!signal.aborted){$('error').textContent=`趋势读取失败：${error.message}`;$('overviewRetry').hidden=false;}}
   }
+  $('overviewRetry').onclick=loadOverview;
+  $('dailyRetry').onclick=load;
   function setFollowing(value){
     following=value;
     $('followLatest').textContent=value?'刷新最新':'查看最新';
@@ -73,7 +112,7 @@
   };
   document.addEventListener('visibilitychange',checkForNewScan);
   function changeDateOrScope(){
-    page=1;syncUrl();window.ProtectedFeed.refresh();loadOverview();
+    page=1;syncUrl();dateLoad=Promise.all([window.ProtectedFeed.refresh(),loadOverview()]);
     if($('dailyDetails').open)load();else{generation++;clearDaily();}
   }
   function syncSection(){
@@ -88,7 +127,7 @@
   }
   function switchSection(section){$('section').value=section;syncSection();page=1;load();}
   async function load(){
-    const serial=++generation,values=parameters();loading=true;syncUrl();
+    const serial=++generation,values=parameters();loading=true;$('dailyRetry').hidden=true;syncUrl();
     $('apply').disabled=true;$('prev').disabled=true;$('next').disabled=true;
     clearDaily();$('title').textContent='正在读取日报…';$('reportStatus').textContent='正在读取';$('dailyDetails').setAttribute('aria-busy','true');
     try{
@@ -112,10 +151,35 @@
         $('reportStatus').textContent='';$('quality').textContent='';$('qualityReasons').replaceChildren();$('accountStatuses').replaceChildren();
       }
       pages=data.pages;$('page').textContent=`${page} / ${pages}`;
-    }catch(error){if(serial===generation){clearDaily();pages=1;$('title').textContent=`日报读取失败：${error.message}`;$('reportStatus').textContent='读取失败';}}
+    }catch(error){if(serial===generation){clearDaily();pages=1;$('dailyRetry').hidden=false;$('title').textContent=`日报读取失败：${error.message}`;$('reportStatus').textContent='读取失败';}}
     finally{if(serial===generation){loading=false;$('dailyDetails').setAttribute('aria-busy','false');$('apply').disabled=false;$('prev').disabled=page<=1;$('next').disabled=page>=pages;}}
   }
   $('dailyDetails').ontoggle=()=>{if(!ready)return;syncUrl();if($('dailyDetails').open)load();};
+  function jump(id){
+    const section=$(id),isDaily=id==='dailyDetails',dest=isDaily?section.querySelector('summary'):section;
+    if(isDaily)section.open=true;
+    if(!isDaily)dest.tabIndex=-1;
+    dest.focus({preventScroll:true});dest.scrollIntoView({block:'start',behavior:'instant'});
+  }
+  document.querySelector('.dashboard-jumps').addEventListener('click',event=>{
+    const link=event.target.closest('a');
+    if(!link||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+    event.preventDefault();jump(link.hash.slice(1));
+  });
+  $('trendOpenDay').onclick=()=>{
+    const day=$('trendOpenDay').dataset.date,changed=day!==$('date').value;
+    if(changed){$('date').value=day;$('date').dispatchEvent(new Event('change'));}
+    jump('dailyDetails');
+    if(changed){
+      // 上方异步排行回填会推走明细；只在读者仍停于此处时校正一次。
+      const guard=new AbortController(),summary=$('dailyDetails').querySelector('summary');
+      for(const name of ['wheel','touchstart','pointerdown','keydown'])addEventListener(name,()=>guard.abort(),{once:true,passive:true,signal:guard.signal});
+      dateLoad.then(()=>requestAnimationFrame(()=>{
+        if(!guard.signal.aborted&&document.activeElement===summary&&$('date').value===day)summary.scrollIntoView({block:'start',behavior:'instant'});
+        guard.abort();
+      }));
+    }
+  };
   let searchTimer;
   function updateFilterCount(){const form=$('filters'),count=['peers','single'].filter(name=>form.elements.namedItem(name).checked).length;$('filterCount').textContent=count;$('filterCount').classList.toggle('hidden',!count);}
   function applyFilters(){clearTimeout(searchTimer);if(!$('filters').reportValidity())return;page=1;syncSection();load();}
@@ -128,6 +192,10 @@
   $('advancedFilters').addEventListener('keydown',event=>{if(event.key==='Escape'){$('advancedFilters').open=false;$('advancedFilters').querySelector('summary').focus();}});
   $('prev').onclick=()=>{if(!loading&&page>1){page--;load();}};$('next').onclick=()=>{if(!loading&&page<pages){page++;load();}};
   $('section').onchange=()=>switchSection($('section').value);
+  for(const [id,step] of [['dayBack',-1],['dayForward',1]])$(id).onclick=()=>{
+    const day=$('date');if(step<0)day.stepDown();else day.stepUp();
+    day.dispatchEvent(new Event('change'));
+  };
   $('date').onchange=()=>{if($('date').reportValidity()){setFollowing(false);changeDateOrScope();}};
   $('scope').onchange=()=>{if(following){page=1;syncUrl();readLatest();}else changeDateOrScope();};
   $('overviewDays').onchange=()=>{syncUrl();loadOverview();};
@@ -148,7 +216,7 @@
       const query=new URLSearchParams(location.search);
       for(const element of $('filters').elements){if(!element.name||!query.has(element.name))continue;if(element.type==='checkbox')element.checked=query.get(element.name)==='1';else element.value=query.get(element.name);}
       if(!diagnostics&&!['signals','reappeared'].includes($('section').value))$('section').value='signals';if(!diagnostics)$('scope').value='mine';syncSection();page=Math.max(1,parseInt(query.get('page'),10)||1);
-      window.ProtectedFeed.init({get,syncUrl,query,pinDate:()=>setFollowing(false),retry:()=>following?readLatest():window.ProtectedFeed.refresh()});
+      readerId=auth.user.id;window.ProtectedFeed.init({get,syncUrl,query,userId:readerId,navigate:followInventory,pinDate:()=>setFollowing(false),retry:()=>following?readLatest():window.ProtectedFeed.refresh()});
       // 默认入口以最近有记录的北京自然日为准；带日期或轮次的链接保持原选择。
       const recent=!query.has('date')&&!query.has('slot');
       setFollowing(recent);lastCheck=Date.now();
@@ -156,7 +224,7 @@
       ready=true;$('followLatest').disabled=false;
       ticker=setInterval(checkForNewScan,checkInterval);
       $('dailyDetails').open=query.get('details')==='1'||(!query.has('details')&&(query.has('peers')||query.has('single')||!!query.get('q')||page>1||$('section').value!=='signals'));
-      syncUrl();if(!recent)window.ProtectedFeed.refresh();await loadOverview();
+      syncUrl();await Promise.all([recent?null:window.ProtectedFeed.refresh(),loadOverview()]);restoreRank();
     }catch(error){clearDaily();$('error').textContent=error.message;}
   }
   boot();

@@ -14,3 +14,99 @@ h1,h2,h3,h4{letter-spacing:normal}.tabs{gap:8px;flex-wrap:wrap}.tabs button{padd
 
 /* 新增数量与主数量并排，时间单独占一行。 */
 .protection-count{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 10px;align-items:center}.protection-count>.protection-label{grid-column:1;font-size:14px}.protection-count>strong{grid-column:1;overflow-wrap:anywhere}.protection-count>.meta{grid-column:1/-1}.protection-growth{grid-column:2;grid-row:1/3;display:grid;gap:12px;align-self:center}.protection-growth>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px;white-space:nowrap}.protection-growth span{font-size:11px}.protection-growth b{font-size:15px;font-variant-numeric:tabular-nums;line-height:1.2}
+
+.monitor-empty{display:grid;justify-items:center;align-content:center;gap:12px;min-height:130px;padding:20px;text-align:center}.monitor-empty strong{font-weight:600;color:var(--text)}.monitor-empty button{min-height:40px}
+#subscriptionTools>div{min-width:0;flex:1}#subscriptionTools input{width:100%}
+
+/* 详情页让目标和物品先出现，时间、取消监控等次要动作不独占一行。 */
+.detail-sr-title {position:absolute!important;width:1px;height:1px;padding:0!important;margin:-1px!important;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+#detailView .detail-head {display:flex;flex-direction:column;align-items:stretch;gap:3px}
+.detail-actions {display:flex;justify-content:space-between;align-items:center;gap:10px}
+#detailView .detail-actions button {padding:6px 10px;min-height:36px;font-size:13px;border-width:1px}
+#detailView .detail-actions #deleteMonitor {align-self:center;background:transparent;color:var(--danger-text);border-color:var(--row-border);font-size:12px}
+#detailView .detail-head h2 {margin:6px 0 0;line-height:1.35;overflow-wrap:anywhere}
+#detailMeta {margin:0;color:var(--muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.detail-filterbar {display:flex;flex-wrap:wrap;align-items:center;gap:7px 18px;margin:12px 0 5px}
+.detail-filterbar .search-wrap {flex:1 1 165px}
+.detail-filterbar .meta {display:flex;align-items:center;gap:4px;margin:0;min-height:32px;white-space:nowrap}
+#itemResultMeta {font-size:12px}
+@media(max-width:680px){
+ #detailView {margin-top:10px}
+ #detailView .detail-stats {grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:12px 0 6px}
+ #detailView .detail-stats .stat {padding:7px 9px;min-width:0}
+ #detailView .detail-stats .stat span {font-size:12px}
+ #detailView .detail-stats .stat b {font-size:22px;line-height:1.2;margin-top:3px}
+ #detailView .detail-stats .stat:last-child {grid-column:1/-1;display:flex;align-items:baseline;gap:7px;padding:3px 0;border:0;background:transparent}
+ #detailView .detail-stats .stat:last-child b {font-size:12px!important;font-weight:500;margin:0;color:var(--muted)}
+ #detailView .tabs {gap:5px;margin:8px 0}
+ #detailView .tabs button {padding:7px 9px;min-height:36px}
+ .detail-filterbar input[type=search] {padding:8px 10px;min-height:38px}
+ .detail-filterbar .meta {font-size:12px}
+}
+
+/* 紧凑的目标列表：订阅总数不随搜索变化，数量旁保留各自的观察周期。 */
+#entitlementPanel {display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;margin:8px 0 12px}
+#entitlementPanel .entitlement-card {border:0;background:transparent;padding:0;gap:8px}
+#entitlementPanel .activation-card {padding:0;border:0;background:transparent}
+#activationCard summary {color:var(--blue);cursor:pointer;font-size:13px;padding:7px 0}
+#activationCard[open] {flex-basis:100%}
+#redeemCodeForm {max-width:430px}
+#redeemCodeForm label {display:block;margin:6px 0;font-size:13px;color:var(--text)}
+#activationCard .activation-row {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:8px}
+#activationCard .activation-row>* {min-height:44px}
+#activationCode[aria-invalid=true] {border-color:var(--danger-text)}
+#activationCard .activation-feedback {color:var(--danger-text);margin:6px 0;font-size:13px}
+#activationCard .activation-help {margin:7px 0;font-size:12px;color:var(--muted)}
+#activationReceipt {flex-basis:100%;width:fit-content;margin:0;color:var(--success-text);background:var(--success-bg);border-radius:8px;padding:8px 12px;font-size:14px}
+#activationReceipt:empty {position:absolute;margin:-1px;padding:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+#activationCard .activation-feedback:empty {margin:0}
+#monitorView>.pager[hidden] {display:none}
+#monitorView .inventory-heading {align-items:end;margin:0 0 14px}
+.inventory-heading h2 {font-size:19px}
+.monitor-meta {display:flex;gap:4px 12px;align-items:baseline;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:5px}
+.monitor-meta b,.monitor-meta>strong {color:var(--text);font-variant-numeric:tabular-nums}
+.monitor-meta>strong[hidden]{display:none}
+.monitor-schedule {font-size:11px;margin:4px 0 0;color:var(--muted)}
+#monitorView #message:empty {display:none}
+#monitorView .card-title {align-items:flex-start}
+#monitorView .card-title>div {min-width:0}
+#monitorView .card-title h3 {margin:0 0 3px;font-size:16px}
+.card-round {display:inline-flex;align-items:center;min-height:32px;flex:none;color:var(--blue);font-size:12px;white-space:nowrap;text-decoration:none}
+.card-round:hover {text-decoration:underline}
+#monitorView .inventory-card {gap:12px;padding:15px}
+#monitorView .protection-count {padding:10px 12px;gap:3px 10px}
+#monitorView .protection-count>strong {font-size:28px}
+#monitorView .protection-growth {gap:7px}
+#monitorView .card-metrics {gap:8px}
+#monitorView .card-metrics>div {gap:2px}
+#monitorView .card-metrics b {font-size:18px}
+#monitorView .card-metrics time,#monitorView .card-stamp,#monitorView .card-stamp time {color:var(--muted);font-size:11px}
+#monitorView .card-actions {align-items:center;gap:7px}
+#monitorView .card-actions button {min-height:38px}
+.card-stamp {margin-right:auto}
+@media(max-width:680px){
+ #monitorView {padding:13px}
+ #monitorView .inventory-heading {align-items:stretch;gap:10px;margin-bottom:11px}
+ #monitorSearch {padding:8px 11px;min-height:40px}
+ .monitor-meta {gap:3px 10px}
+ #monitorView .inventory-card {gap:9px;padding:12px}
+ #monitorView .card-actions button {flex:0 1 auto}
+ #monitorView .card-title h3 {font-size:15px}
+ #monitorView .protection-count .meta {grid-column:1/-1}
+}
+
+.snapshot-context {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;margin:12px 0 0;padding:8px 10px;background:var(--summary);color:var(--text);border-left:3px solid var(--blue);border-radius:7px}
+.snapshot-context[hidden] {display:none}
+.snapshot-context>div {display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 8px}
+.snapshot-context time {font-size:12px;color:var(--muted)}
+#detailView .snapshot-context button {font-size:12px;min-height:38px;padding:5px 8px}
+
+.inventory-results-bar{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;margin:4px 0}.inventory-results-bar #itemResultMeta{margin:0 auto 0 0}.inventory-results-bar select{width:auto;max-width:100%;min-height:40px}.inventory-results-bar button,.inventory-more{min-height:44px}.inventory-more{display:block;margin:12px auto}.inventory-more[hidden],.inventory-results-bar [hidden]{display:none}.item-row:focus-visible{outline:2px solid var(--accent,currentColor);outline-offset:-2px}
+
+/* 查询记录的链接可在新标签打开；记录页不混入发起查询的表单。 */
+.query-history-open,.query-back {display:inline-flex;align-items:center;min-height:44px;color:var(--blue);text-underline-offset:3px}
+.query-history-open {flex-shrink:0;padding:0 8px}
+#queryRecordTitle {margin:8px 0;overflow-wrap:anywhere}
+#queryRecordBody {margin-top:12px}
+#queryRecordBody:empty {display:none}
+#queryRecordStatus:empty {margin:0}

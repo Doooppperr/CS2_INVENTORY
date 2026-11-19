@@ -36,3 +36,7 @@
 .saved-account-row [data-switch-user]{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .saved-account-row [data-forget-user]{width:auto;color:var(--muted);font-size:12px}
 .account-menu-body button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+
+.account-progress{margin:3px 8px 6px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}.account-progress:empty{display:none}
+
+.saved-account-row [data-switch-user]{white-space:normal;overflow-wrap:anywhere;overflow:visible;line-height:1.35}.saved-account-row[hidden],#savedAccountSearch[hidden]{display:none}.saved-account-section #savedAccountSearch{width:100%;min-height:44px;margin:3px 0 7px}.saved-account-section #savedMatches{margin:4px 8px}.saved-account-section #savedMatches:empty{display:none}

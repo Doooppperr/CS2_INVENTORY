@@ -19,3 +19,11 @@ body { font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
 :where(.shell) :is(input,button,select,summary,a):focus-visible {outline:2px solid var(--focus);outline-offset:2px}
 .workspace-nav a.active {border-color:transparent}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+
+.shell a.skip-to-content{position:fixed;z-index:40;top:8px;left:8px;transform:translateY(calc(-100% - 12px));padding:10px 16px;border-radius:8px;color:var(--button-text);background:var(--blue);font-weight:650}
+.shell a.skip-to-content:focus{transform:none}
+@media(max-width:680px){
+ .workspace-brand,.workspace-nav>a,.account-menu>summary,.module-nav>a,.account-menu-body button,.account-menu-body a,.account-menu-body select{min-height:44px;align-items:center}
+ .workspace-nav>a,.module-nav>a{display:inline-flex;justify-content:center}
+ .signal-item li a,.dashboard-shell .signal-views button{min-height:44px}
+}

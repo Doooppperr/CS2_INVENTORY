@@ -63,7 +63,12 @@ class NavigationTests(unittest.TestCase):
 
     def test_landing_defaults_dashboard_and_validates_return_path(self):
         html = self.client.get('/').get_data(as_text=True)
-        self.assertIn("url('app/dashboard')", html)
+        page = BeautifulSoup(html, 'html.parser')
+        for parent in ('.nav', '.hero'):
+            link = page.select_one(f'{parent} a[data-dashboard-entry]')
+            self.assertIsNotNone(link)
+            self.assertEqual(link['href'], '/app/dashboard')
+            self.assertEqual(link.get_text(strip=True), '进入看板')
         self.assertIn('window.WorkspaceNavigation.destination(next,root)', html)
         self.assertNotIn("next&&next.startsWith('/')", html)
 
